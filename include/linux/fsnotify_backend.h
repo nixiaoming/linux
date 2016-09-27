@@ -54,12 +54,24 @@
  * dnotify and inotify. */
 #define FS_EVENT_ON_CHILD	0x08000000
 
+/* This root inode cares about things that happen to inodes on same super block.
+ * Can only be set for fanotify.
+ * Overloads IN_ONLYDIR inotify open only flag */
+#define FS_EVENT_ON_SB		0x01000000
+
+#define FS_EVENT_ON_DESCENDANT	(FS_EVENT_ON_CHILD | FS_EVENT_ON_SB)
+
 /* This is a list of all events that may get sent to a parernt based on fs event
  * happening to inodes inside that directory */
 #define FS_EVENTS_POSS_ON_CHILD   (FS_ACCESS | FS_MODIFY | FS_ATTRIB |\
 				   FS_CLOSE_WRITE | FS_CLOSE_NOWRITE | FS_OPEN |\
 				   FS_MOVED_FROM | FS_MOVED_TO | FS_CREATE |\
 				   FS_DELETE | FS_OPEN_PERM | FS_ACCESS_PERM)
+
+/* This is a list of all events that may get sent to the root inode based on fs
+ * event happening to inodes on the same super block */
+#define FS_EVENTS_POSS_ON_SB   (FS_EVENTS_POSS_ON_CHILD |\
+				FS_DELETE_SELF | FS_MOVE_SELF)
 
 #define FS_MOVE			(FS_MOVED_FROM | FS_MOVED_TO)
 
@@ -70,9 +82,10 @@
 			     FS_MOVED_FROM | FS_MOVED_TO | FS_CREATE | \
 			     FS_DELETE | FS_DELETE_SELF | FS_MOVE_SELF | \
 			     FS_UNMOUNT | FS_Q_OVERFLOW | FS_IN_IGNORED | \
-			     FS_OPEN_PERM | FS_ACCESS_PERM | FS_EXCL_UNLINK | \
-			     FS_ISDIR | FS_IN_ONESHOT | FS_DN_RENAME | \
-			     FS_DN_MULTISHOT | FS_EVENT_ON_CHILD)
+			     FS_OPEN_PERM | FS_ACCESS_PERM | \
+			     FS_EXCL_UNLINK | FS_ISDIR | FS_IN_ONESHOT | \
+			     FS_DN_RENAME | FS_DN_MULTISHOT | \
+			     FS_EVENT_ON_CHILD | FS_EVENT_ON_SB)
 
 struct fsnotify_group;
 struct fsnotify_event;
