@@ -266,6 +266,16 @@ extern void __fsnotify_inode_delete(struct inode *inode);
 extern void __fsnotify_vfsmount_delete(struct vfsmount *mnt);
 extern u32 fsnotify_get_cookie(void);
 
+static inline int fsnotify_inode_watches_sb(struct inode *inode)
+{
+	/* FS_EVENT_ON_SB is set if the sb root inode may care */
+	if (!(inode->i_fsnotify_mask & FS_EVENT_ON_SB))
+		return 0;
+	/* this root inode might care about sb events, does it care about the
+	 * specific set of events that can happen on a distant child? */
+	return inode->i_fsnotify_mask & FS_EVENTS_POSS_ON_SB;
+}
+
 static inline int fsnotify_inode_watches_children(struct inode *inode)
 {
 	/* FS_EVENT_ON_CHILD is set if the inode may care */
