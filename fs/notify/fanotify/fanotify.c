@@ -90,22 +90,32 @@ static int fanotify_get_response(struct fsnotify_group *group,
 static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 				       struct fsnotify_mark *vfsmnt_mark,
 				       u32 event_mask,
-				       void *data, int data_type)
+				       struct path *path, int data_type)
 {
 	__u32 marks_mask, marks_ignored_mask;
-	struct path *path = data;
+	struct dentry *dentry = path->dentry;
 
-	pr_debug("%s: inode_mark=%p vfsmnt_mark=%p mask=%x data=%p"
+	pr_debug("%s: inode_mark=%p vfsmnt_mark=%p mask=%x"
 		 " data_type=%d\n", __func__, inode_mark, vfsmnt_mark,
-		 event_mask, data, data_type);
+		 event_mask, data_type);
 
 	/* if we don't have enough info to send an event to userspace say no */
-	if (data_type != FSNOTIFY_EVENT_PATH)
+	if (data_type != FSNOTIFY_EVENT_PATH &&
+	    data_type != FSNOTIFY_EVENT_DENTRY)
+		return false;
+
+	pr_debug("%s: dentry=%p inode=%p d_flags=%x\n", __func__,
+		 dentry, dentry->d_inode, dentry->d_flags);
+
+	/* XXX: we have no reference on mark_mnt, so it may be unmounted */
+	if (WARN_ON(mark_mnt && mark_mnt->mnt_sb != dentry->d_sb))
+		return false;
+
+	if (WARN_ON(d_is_negative(dentry) || d_really_is_negative(dentry)))
 		return false;
 
 	/* sorry, fanotify only gives a damn about files and dirs */
-	if (!d_is_reg(path->dentry) &&
-	    !d_can_lookup(path->dentry))
+	if (!d_is_reg(dentry) && !d_can_lookup(dentry))
 		return false;
 
 	if (inode_mark && vfsmnt_mark) {
@@ -128,15 +138,15 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 		BUG();
 	}
 
-	if (d_is_dir(path->dentry) &&
+	if (d_is_dir(dentry) &&
 	    !(marks_mask & FS_ISDIR & ~marks_ignored_mask))
 		return false;
 
-	if (event_mask & FAN_ALL_OUTGOING_EVENTS & marks_mask &
-				 ~marks_ignored_mask)
-		return true;
+	if (!(event_mask & FAN_ALL_OUTGOING_EVENTS & marks_mask &
+	      ~marks_ignored_mask))
+		return false;
 
-	return false;
+	return true;
 }
 
 struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
@@ -163,9 +173,13 @@ struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
 init: __maybe_unused
 	fsnotify_init_event(&event->fse, inode, mask);
 	event->tgid = get_pid(task_tgid(current));
-	if (path) {
+	if (path && path->dentry) {
 		event->path = *path;
 		path_get(&event->path);
+		pr_debug("%s: mnt=%p, dentry=%p parent=%p d_flags=%x\n",
+				__func__, event->path.mnt, event->path.dentry,
+				event->path.dentry->d_parent,
+				event->path.dentry->d_flags);
 	} else {
 		event->path.mnt = NULL;
 		event->path.dentry = NULL;
@@ -176,13 +190,14 @@ init: __maybe_unused
 static int fanotify_handle_event(struct fsnotify_group *group,
 				 struct inode *inode,
 				 struct fsnotify_mark *inode_mark,
-				 struct fsnotify_mark *fanotify_mark,
+				 struct fsnotify_mark *vfsmnt_mark,
 				 u32 mask, void *data, int data_type,
 				 const unsigned char *file_name, u32 cookie)
 {
 	int ret = 0;
 	struct fanotify_event_info *event;
 	struct fsnotify_event *fsn_event;
+	struct path path = { };
 
 	BUILD_BUG_ON(FAN_ACCESS != FS_ACCESS);
 	BUILD_BUG_ON(FAN_MODIFY != FS_MODIFY);
@@ -195,14 +210,19 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 	BUILD_BUG_ON(FAN_ACCESS_PERM != FS_ACCESS_PERM);
 	BUILD_BUG_ON(FAN_ONDIR != FS_ISDIR);
 
-	if (!fanotify_should_send_event(inode_mark, fanotify_mark, mask, data,
+	if (data_type == FSNOTIFY_EVENT_PATH)
+		path = *(struct path *)data;
+	else if (data_type == FSNOTIFY_EVENT_DENTRY)
+		path.dentry = (struct dentry *)data;
+
+	if (!fanotify_should_send_event(inode_mark, vfsmnt_mark, mask, &path,
 					data_type))
 		return 0;
 
 	pr_debug("%s: group=%p inode=%p mask=%x\n", __func__, group, inode,
 		 mask);
 
-	event = fanotify_alloc_event(inode, mask, data);
+	event = fanotify_alloc_event(inode, mask, &path);
 	if (unlikely(!event))
 		return -ENOMEM;
 
