@@ -83,14 +83,14 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 
 	fsnotify(old_dir, old_dir_mask, source, FSNOTIFY_EVENT_INODE, old_name,
 		 fs_cookie);
-	fsnotify(new_dir, new_dir_mask, source, FSNOTIFY_EVENT_INODE, new_name,
+	fsnotify(new_dir, new_dir_mask, moved, FSNOTIFY_EVENT_DENTRY, new_name,
 		 fs_cookie);
 
 	if (target)
 		fsnotify_link_count(target);
 
 	if (source)
-		fsnotify(source, FS_MOVE_SELF, moved->d_inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+		fsnotify(source, FS_MOVE_SELF, moved, FSNOTIFY_EVENT_DENTRY, NULL, 0);
 	audit_inode_child(new_dir, moved, AUDIT_TYPE_CHILD_CREATE);
 }
 
@@ -139,7 +139,7 @@ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
 {
 	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 
-	fsnotify(inode, FS_CREATE, dentry->d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
+	fsnotify(inode, FS_CREATE, dentry, FSNOTIFY_EVENT_DENTRY, dentry->d_name.name, 0);
 }
 
 /*
@@ -152,7 +152,7 @@ static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct 
 	fsnotify_link_count(inode);
 	audit_inode_child(dir, new_dentry, AUDIT_TYPE_CHILD_CREATE);
 
-	fsnotify(dir, FS_CREATE, inode, FSNOTIFY_EVENT_INODE, new_dentry->d_name.name, 0);
+	fsnotify(dir, FS_CREATE, new_dentry, FSNOTIFY_EVENT_DENTRY, new_dentry->d_name.name, 0);
 }
 
 /*
@@ -161,11 +161,10 @@ static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct 
 static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)
 {
 	__u32 mask = (FS_CREATE | FS_ISDIR);
-	struct inode *d_inode = dentry->d_inode;
 
 	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 
-	fsnotify(inode, mask, d_inode, FSNOTIFY_EVENT_INODE, dentry->d_name.name, 0);
+	fsnotify(inode, mask, dentry, FSNOTIFY_EVENT_DENTRY, dentry->d_name.name, 0);
 }
 
 /*
@@ -251,7 +250,7 @@ static inline void fsnotify_xattr(struct dentry *dentry)
 		mask |= FS_ISDIR;
 
 	fsnotify_parent(NULL, dentry, mask);
-	fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+	fsnotify(inode, mask, dentry, FSNOTIFY_EVENT_DENTRY, NULL, 0);
 }
 
 /*
@@ -286,7 +285,7 @@ static inline void fsnotify_change(struct dentry *dentry, unsigned int ia_valid)
 			mask |= FS_ISDIR;
 
 		fsnotify_parent(NULL, dentry, mask);
-		fsnotify(inode, mask, inode, FSNOTIFY_EVENT_INODE, NULL, 0);
+		fsnotify(inode, mask, dentry, FSNOTIFY_EVENT_DENTRY, NULL, 0);
 	}
 }
 
