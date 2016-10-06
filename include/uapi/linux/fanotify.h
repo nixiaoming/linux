@@ -25,7 +25,10 @@
 
 #define FAN_ONDIR		0x40000000	/* event occurred against dir */
 
+#define FAN_EVENT_ON_SB		0x01000000	/* interested in all sb inodes */
 #define FAN_EVENT_ON_CHILD	0x08000000	/* interested in child events */
+
+#define FAN_EVENT_ON_DESCENDANT	(FAN_EVENT_ON_CHILD | FAN_EVENT_ON_SB)
 
 /* helper events */
 #define FAN_CLOSE		(FAN_CLOSE_WRITE | FAN_CLOSE_NOWRITE) /* close */

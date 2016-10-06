@@ -912,9 +912,9 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	}
 
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
-	if (mask & ~(FAN_ALL_EVENTS | FAN_ALL_PERM_EVENTS | FAN_EVENT_ON_CHILD))
+	if (mask & ~(FAN_ALL_EVENTS | FAN_ALL_PERM_EVENTS | FAN_EVENT_ON_DESCENDANT))
 #else
-	if (mask & ~(FAN_ALL_EVENTS | FAN_EVENT_ON_CHILD))
+	if (mask & ~(FAN_ALL_EVENTS | FAN_EVENT_ON_DESCENDANT))
 #endif
 		return -EINVAL;
 
@@ -937,6 +937,12 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	    group->priority == FS_PRIO_0)
 		goto fput_and_out;
 
+	/* Super block root watch is not a mount watch */
+	ret = -EINVAL;
+	if ((mask & FAN_EVENT_ON_SB) &&
+	    (flags & FAN_MARK_MOUNT))
+		goto fput_and_out;
+
 	if (flags & FAN_MARK_FLUSH) {
 		ret = 0;
 		if (flags & FAN_MARK_MOUNT)
@@ -951,7 +957,9 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 		goto fput_and_out;
 
 	/* inode held in place by reference to path; group by fget on fd */
-	if (!(flags & FAN_MARK_MOUNT))
+	if (mask & FAN_EVENT_ON_SB)
+		inode = path.dentry->d_sb->s_root->d_inode;
+	else if (!(flags & FAN_MARK_MOUNT))
 		inode = path.dentry->d_inode;
 
 	/*
@@ -960,6 +968,7 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	 * even if the events happened on another mount point.
 	 */
 	if ((flags & FAN_MARK_MOUNT) ||
+	    (mask & FAN_EVENT_ON_SB) ||
 	    group->fanotify_data.flags & FAN_EVENT_INFO_PARENT)
 		mnt = path.mnt;
 
