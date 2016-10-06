@@ -676,6 +676,7 @@ static int fanotify_add_vfsmount_mark(struct fsnotify_group *group,
 }
 
 static int fanotify_add_inode_mark(struct fsnotify_group *group,
+				   struct vfsmount *mnt,
 				   struct inode *inode, __u32 mask,
 				   unsigned int flags)
 {
@@ -697,7 +698,7 @@ static int fanotify_add_inode_mark(struct fsnotify_group *group,
 	mutex_lock(&group->mark_mutex);
 	fsn_mark = fsnotify_find_inode_mark(group, inode);
 	if (!fsn_mark) {
-		fsn_mark = fanotify_add_new_mark(group, inode, NULL);
+		fsn_mark = fanotify_add_new_mark(group, inode, mnt);
 		if (IS_ERR(fsn_mark)) {
 			mutex_unlock(&group->mark_mutex);
 			return PTR_ERR(fsn_mark);
@@ -912,7 +913,14 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	/* inode held in place by reference to path; group by fget on fd */
 	if (!(flags & FAN_MARK_MOUNT))
 		inode = path.dentry->d_inode;
-	else
+
+	/*
+	 * Store the mount point from which the watch was added also for
+	 * inode marks. This mount point may be used to report dentry events,
+	 * even if the events happened on another mount point.
+	 */
+	if ((flags & FAN_MARK_MOUNT) ||
+	    group->fanotify_data.flags & FAN_EVENT_INFO_PARENT)
 		mnt = path.mnt;
 
 	/* create/update an inode mark */
@@ -921,7 +929,7 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 		if (flags & FAN_MARK_MOUNT)
 			ret = fanotify_add_vfsmount_mark(group, mnt, mask, flags);
 		else
-			ret = fanotify_add_inode_mark(group, inode, mask, flags);
+			ret = fanotify_add_inode_mark(group, mnt, inode, mask, flags);
 		break;
 	case FAN_MARK_REMOVE:
 		if (flags & FAN_MARK_MOUNT)

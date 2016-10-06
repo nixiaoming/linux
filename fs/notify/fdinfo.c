@@ -119,7 +119,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 	if (mark->flags & FSNOTIFY_MARK_FLAG_IGNORED_SURV_MODIFY)
 		mflags |= FAN_MARK_IGNORED_SURV_MODIFY;
 
-	if (mark->flags & FSNOTIFY_MARK_FLAG_INODE) {
+	if (FSNOTIFY_IS_INODE_MARK(mark)) {
 		inode = igrab(mark->inode);
 		if (!inode)
 			return;
@@ -129,7 +129,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		show_mark_fhandle(m, inode);
 		seq_putc(m, '\n');
 		iput(inode);
-	} else if (mark->flags & FSNOTIFY_MARK_FLAG_VFSMOUNT) {
+	} else if (FSNOTIFY_IS_VFSMOUNT_MARK(mark)) {
 		struct mount *mnt = real_mount(mark->mnt);
 
 		seq_printf(m, "fanotify mnt_id:%x mflags:%x mask:%x ignored_mask:%x\n",

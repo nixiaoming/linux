@@ -54,6 +54,7 @@ void fsnotify_destroy_inode_mark(struct fsnotify_mark *mark)
 
 	hlist_del_init_rcu(&mark->obj_list);
 	mark->inode = NULL;
+	mark->mnt = NULL;
 
 	/*
 	 * this mark is now off the inode->i_fsnotify_marks list and we

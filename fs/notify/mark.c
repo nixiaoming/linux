@@ -148,10 +148,10 @@ void fsnotify_detach_mark(struct fsnotify_mark *mark)
 
 	mark->flags &= ~FSNOTIFY_MARK_FLAG_ATTACHED;
 
-	if (mark->flags & FSNOTIFY_MARK_FLAG_INODE) {
+	if (FSNOTIFY_IS_INODE_MARK(mark)) {
 		inode = mark->inode;
 		fsnotify_destroy_inode_mark(mark);
-	} else if (mark->flags & FSNOTIFY_MARK_FLAG_VFSMOUNT)
+	} else if (FSNOTIFY_IS_VFSMOUNT_MARK(mark))
 		fsnotify_destroy_vfsmount_mark(mark);
 	else
 		BUG();
@@ -352,6 +352,11 @@ int fsnotify_add_mark_list(struct hlist_head *head, struct fsnotify_mark *mark,
  * Attach an initialized mark to a given group and fs object.
  * These marks may be used for the fsnotify backend to determine which
  * event types should be delivered to which group.
+ *
+ * Either @inode or @mnt MUST be non NULL.
+ * @inode may be NULL implying this is a mount watch.
+ * @inode and @mnt both non NULL imply this is an inode watch
+ * and @mnt is the mount point from which the watch was added.
  */
 int fsnotify_add_mark_locked(struct fsnotify_mark *mark,
 			     struct fsnotify_group *group, struct inode *inode,
@@ -359,7 +364,6 @@ int fsnotify_add_mark_locked(struct fsnotify_mark *mark,
 {
 	int ret = 0;
 
-	BUG_ON(inode && mnt);
 	BUG_ON(!inode && !mnt);
 	BUG_ON(!mutex_is_locked(&group->mark_mutex));
 
@@ -382,6 +386,11 @@ int fsnotify_add_mark_locked(struct fsnotify_mark *mark,
 		ret = fsnotify_add_inode_mark(mark, group, inode, allow_dups);
 		if (ret)
 			goto err;
+		/* Store the mount point from which the inode watch was added */
+		if (mnt) {
+			mark->mnt = mnt;
+			mark->flags |= FSNOTIFY_MARK_FLAG_VFSMOUNT;
+		}
 	} else if (mnt) {
 		ret = fsnotify_add_vfsmount_mark(mark, group, mnt, allow_dups);
 		if (ret)
