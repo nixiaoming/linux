@@ -206,13 +206,22 @@ static int process_access_response(struct fsnotify_group *group,
 }
 #endif
 
+static int round_event_name_len(struct fanotify_file_event_info *event)
+{
+	if (!event->name_len)
+		return 0;
+	return roundup(event->name_len + 1, FAN_EVENT_METADATA_LEN);
+}
+
 static ssize_t copy_event_to_user(struct fsnotify_group *group,
 				  struct fsnotify_event *event,
 				  char __user *buf)
 {
 	struct fanotify_event_metadata fanotify_event_metadata;
+	struct fanotify_file_event_info *ffe = NULL;
 	struct file *f;
 	int fd, ret;
+	size_t pad_name_len = 0;
 
 	pr_debug("%s: group=%p event=%p\n", __func__, group, event);
 
@@ -220,11 +229,36 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	if (ret < 0)
 		return ret;
 
+	if ((event->mask & FAN_FILENAME_EVENTS) &&
+	    (group->fanotify_data.flags & FAN_EVENT_INFO_NAME)) {
+		ffe = FANOTIFY_FE(event);
+		pad_name_len = round_event_name_len(ffe);
+		fanotify_event_metadata.event_len += pad_name_len;
+	}
+
 	fd = fanotify_event_metadata.fd;
 	ret = -EFAULT;
 	if (copy_to_user(buf, &fanotify_event_metadata,
-			 fanotify_event_metadata.event_len))
+			 FAN_EVENT_METADATA_LEN))
 		goto out_close_fd;
+
+	buf += FAN_EVENT_METADATA_LEN;
+
+	/*
+	 * send the filename and pad to a multiple of FAN_EVENT_METADATA_LEN
+	 * with zeros.
+	 */
+	ret = -EFAULT;
+	if (ffe && pad_name_len) {
+		/* copy the filename */
+		if (copy_to_user(buf, ffe->name, ffe->name_len))
+			goto out_close_fd;
+		buf += ffe->name_len;
+
+		/* fill userspace with 0's */
+		if (clear_user(buf, pad_name_len - ffe->name_len))
+			goto out_close_fd;
+	}
 
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
 	if (event->mask & FAN_ALL_PERM_EVENTS)
@@ -779,7 +813,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	group->fanotify_data.user = user;
 	atomic_inc(&user->fanotify_listeners);
 
-	oevent = fanotify_alloc_event(NULL, FS_Q_OVERFLOW, NULL);
+	oevent = fanotify_alloc_event(NULL, FS_Q_OVERFLOW, NULL, NULL);
 	if (unlikely(!oevent)) {
 		fd = -ENOMEM;
 		goto out_destroy_group;
@@ -940,6 +974,14 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	if ((flags & FAN_MARK_MOUNT) ||
 	    !(group->fanotify_data.flags & FAN_EVENT_INFO_PARENT))
 		mask &= ~FAN_DENTRY_EVENTS;
+
+	/*
+	 * Filename events are not interesting without the name inforamtion.
+	 * Ignore filename events unless user explicitly set the new
+	 * FAN_EVENT_INFO_NAME flag to fanotify_init().
+	 */
+	if (!(group->fanotify_data.flags & FAN_EVENT_INFO_NAME))
+		mask &= ~FAN_FILENAME_EVENTS;
 
 	/* create/update an inode mark */
 	switch (flags & (FAN_MARK_ADD | FAN_MARK_REMOVE)) {

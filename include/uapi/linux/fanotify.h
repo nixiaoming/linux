@@ -47,7 +47,9 @@
 
 /* These bits determine the format of the reported events */
 #define FAN_EVENT_INFO_PARENT	0x00000100	/* Event fd maybe of parent */
-#define FAN_ALL_EVENT_INFO_BITS (FAN_EVENT_INFO_PARENT)
+#define FAN_EVENT_INFO_NAME	0x00000200	/* Event data has filename */
+#define FAN_ALL_EVENT_INFO_BITS (FAN_EVENT_INFO_PARENT | \
+				 FAN_EVENT_INFO_NAME)
 
 #define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
 				 FAN_ALL_CLASS_BITS | \
@@ -97,6 +99,10 @@
  */
 #define FAN_ALL_PERM_EVENTS (FAN_OPEN_PERM |\
 			     FAN_ACCESS_PERM)
+
+/* Events on directory requiring to pass filename */
+#define FAN_FILENAME_EVENTS (FAN_MOVED_FROM | FAN_MOVED_TO |\
+			     FAN_CREATE | FAN_DELETE)
 
 #define FAN_ALL_OUTGOING_EVENTS	(FAN_ALL_EVENTS |\
 				 FAN_ALL_PERM_EVENTS |\

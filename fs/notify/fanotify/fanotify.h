@@ -20,6 +20,21 @@ struct fanotify_event_info {
 	struct pid *tgid;
 };
 
+/*
+ * Structure for fanotify events with variable length data.
+ * It gets allocated in fanotify_handle_event() and freed
+ * when the information is retrieved by userspace
+ */
+struct fanotify_file_event_info {
+	struct fanotify_event_info fae;
+	/*
+	 * For filename events (create,delete,rename), path points to the
+	 * directory and name holds the entry name
+	 */
+	int name_len;
+	char name[];
+};
+
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
 /*
  * Structure for permission fanotify events. It gets allocated and freed in
@@ -41,10 +56,17 @@ FANOTIFY_PE(struct fsnotify_event *fse)
 }
 #endif
 
+static inline struct fanotify_file_event_info *
+FANOTIFY_FE(struct fsnotify_event *fse)
+{
+	return container_of(fse, struct fanotify_file_event_info, fae.fse);
+}
+
 static inline struct fanotify_event_info *FANOTIFY_E(struct fsnotify_event *fse)
 {
 	return container_of(fse, struct fanotify_event_info, fse);
 }
 
 struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
-						 struct path *path);
+						 struct path *path,
+						 const char *file_name);

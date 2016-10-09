@@ -20,6 +20,12 @@ static bool should_merge(struct fsnotify_event *old_fsn,
 	old = FANOTIFY_E(old_fsn);
 	new = FANOTIFY_E(new_fsn);
 
+	/*
+	 * Don't merge with a filename event
+	 */
+	if (old_fsn->mask & FAN_FILENAME_EVENTS)
+		return 0;
+
 	if (old_fsn->inode == new_fsn->inode && old->tgid == new->tgid &&
 	    old->path.mnt == new->path.mnt &&
 	    old->path.dentry == new->path.dentry)
@@ -44,6 +50,12 @@ static int fanotify_merge(struct list_head *list, struct fsnotify_event *event)
 	if (event->mask & FAN_ALL_PERM_EVENTS)
 		return 0;
 #endif
+
+	/*
+	 * Don't merge a filename event with any other event
+	 */
+	if (event->mask & FAN_FILENAME_EVENTS)
+		return 0;
 
 	list_for_each_entry_reverse(test_event, list, list) {
 		if (should_merge(test_event, event)) {
@@ -150,7 +162,8 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 }
 
 struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
-						 struct path *path)
+						 struct path *path,
+						 const char *file_name)
 {
 	struct fanotify_event_info *event;
 
@@ -167,6 +180,31 @@ struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
 		goto init;
 	}
 #endif
+
+	/*
+	 * For filename events (create,delete,rename), path points to the
+	 * directory and name holds the entry name, so allocate a variable
+	 * length fanotify_file_event_info struct.
+	 */
+	if (mask & FAN_FILENAME_EVENTS) {
+		struct fanotify_file_event_info *ffe;
+		int alloc_len = sizeof(*ffe);
+		int len = 0;
+
+		if ((mask & FAN_FILENAME_EVENTS) && file_name) {
+			len = strlen(file_name);
+			alloc_len += len + 1;
+		}
+		ffe = kmalloc(alloc_len, GFP_KERNEL);
+		if (!ffe)
+			return NULL;
+		event = &ffe->fae;
+		ffe->name_len = len;
+		if (len)
+			strcpy(ffe->name, file_name);
+		goto init;
+	}
+
 	event = kmem_cache_alloc(fanotify_event_cachep, GFP_KERNEL);
 	if (!event)
 		return NULL;
@@ -229,7 +267,7 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 	pr_debug("%s: group=%p inode=%p mask=%x\n", __func__, group, inode,
 		 mask);
 
-	event = fanotify_alloc_event(inode, mask, &path);
+	event = fanotify_alloc_event(inode, mask, &path, file_name);
 	if (unlikely(!event))
 		return -ENOMEM;
 
@@ -276,6 +314,11 @@ static void fanotify_free_event(struct fsnotify_event *fsn_event)
 		return;
 	}
 #endif
+	if (fsn_event->mask & FAN_FILENAME_EVENTS) {
+		kfree(FANOTIFY_FE(fsn_event));
+		return;
+	}
+
 	kmem_cache_free(fanotify_event_cachep, event);
 }
 
