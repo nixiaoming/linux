@@ -25,6 +25,28 @@ static inline int fsnotify_parent(struct path *path, struct dentry *dentry, __u3
 	return __fsnotify_parent(path, dentry, mask);
 }
 
+/*
+ * Notify this parent about a filename event (create,delete,rename).
+ * Unlike fsnotify_parent(), the event will be reported regardless of the
+ * FS_EVENT_ON_CHILD mask on the parent inode
+ */
+static inline int fsnotify_filename(struct dentry *parent, __u32 mask,
+				    const unsigned char *file_name, u32 cookie)
+{
+	return fsnotify(d_inode(parent), mask, parent, FSNOTIFY_EVENT_DENTRY,
+			file_name, cookie);
+}
+
+/*
+ * Call fsnotify_filename() with parent and d_name of this dentry.
+ * Safe to call with negative dentry, e.g. from fsnotify_nameremove()
+ */
+static inline int fsnotify_d_name(struct dentry *dentry, __u32 mask)
+{
+	return fsnotify_filename(dentry->d_parent, mask,
+				 dentry->d_name.name, 0);
+}
+
 /* simple call site for access decisions */
 static inline int fsnotify_perm(struct file *file, int mask)
 {
@@ -72,8 +94,8 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 {
 	struct inode *source = moved->d_inode;
 	u32 fs_cookie = fsnotify_get_cookie();
-	__u32 old_dir_mask = (FS_EVENT_ON_CHILD | FS_MOVED_FROM);
-	__u32 new_dir_mask = (FS_EVENT_ON_CHILD | FS_MOVED_TO);
+	__u32 old_dir_mask = FS_MOVED_FROM;
+	__u32 new_dir_mask = FS_MOVED_TO;
 	const unsigned char *new_name = moved->d_name.name;
 
 	if (old_dir == new_dir)
@@ -86,8 +108,7 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 
 	fsnotify(old_dir, old_dir_mask, source, FSNOTIFY_EVENT_INODE, old_name,
 		 fs_cookie);
-	fsnotify(new_dir, new_dir_mask, moved, FSNOTIFY_EVENT_DENTRY, new_name,
-		 fs_cookie);
+	fsnotify_filename(moved->d_parent, new_dir_mask, new_name, fs_cookie);
 
 	if (target)
 		fsnotify_link_count(target);
@@ -123,7 +144,7 @@ static inline void fsnotify_nameremove(struct dentry *dentry, int isdir)
 	if (isdir)
 		mask |= FS_ISDIR;
 
-	fsnotify_parent(NULL, dentry, mask);
+	fsnotify_d_name(dentry, mask);
 }
 
 /*
@@ -142,7 +163,7 @@ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
 {
 	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 
-	fsnotify(inode, FS_CREATE, dentry, FSNOTIFY_EVENT_DENTRY, dentry->d_name.name, 0);
+	fsnotify_d_name(dentry, FS_CREATE);
 }
 
 /*
@@ -155,7 +176,7 @@ static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct 
 	fsnotify_link_count(inode);
 	audit_inode_child(dir, new_dentry, AUDIT_TYPE_CHILD_CREATE);
 
-	fsnotify(dir, FS_CREATE, new_dentry, FSNOTIFY_EVENT_DENTRY, new_dentry->d_name.name, 0);
+	fsnotify_d_name(new_dentry, FS_CREATE);
 }
 
 /*
@@ -167,7 +188,7 @@ static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)
 
 	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
 
-	fsnotify(inode, mask, dentry, FSNOTIFY_EVENT_DENTRY, dentry->d_name.name, 0);
+	fsnotify_d_name(dentry, mask);
 }
 
 /*
