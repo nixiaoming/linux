@@ -36,9 +36,14 @@
 #define FAN_UNLIMITED_QUEUE	0x00000010
 #define FAN_UNLIMITED_MARKS	0x00000020
 
+/* These bits determine the format of the reported events */
+#define FAN_EVENT_INFO_PARENT	0x00000100	/* Event fd maybe of parent */
+#define FAN_ALL_EVENT_INFO_BITS (FAN_EVENT_INFO_PARENT)
+
 #define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
-				 FAN_ALL_CLASS_BITS | FAN_UNLIMITED_QUEUE |\
-				 FAN_UNLIMITED_MARKS)
+				 FAN_ALL_CLASS_BITS | \
+				 FAN_ALL_EVENT_INFO_BITS | \
+				 FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS)
 
 /* flags used for fanotify_modify_mark() */
 #define FAN_MARK_ADD		0x00000001

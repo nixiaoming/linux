@@ -193,7 +193,8 @@ struct fsnotify_group {
 			struct list_head access_list;
 			wait_queue_head_t access_waitq;
 #endif /* CONFIG_FANOTIFY_ACCESS_PERMISSIONS */
-			int f_flags;
+			int flags;           /* flags from fanotify_init() */
+			int f_flags; /* event_f_flags from fanotify_init() */
 			unsigned int max_marks;
 			struct user_struct *user;
 		} fanotify_data;

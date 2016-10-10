@@ -733,6 +733,14 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	if (event_f_flags & ~FANOTIFY_INIT_ALL_EVENT_F_BITS)
 		return -EINVAL;
 
+	/*
+	 * New event format info bits can only be set for the default
+	 * notification class
+	 */
+	if ((flags & FAN_ALL_EVENT_INFO_BITS) &&
+	    (flags & FAN_ALL_CLASS_BITS) != FAN_CLASS_NOTIF)
+		return -EINVAL;
+
 	switch (event_f_flags & O_ACCMODE) {
 	case O_RDONLY:
 	case O_RDWR:
@@ -815,6 +823,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	if (fd < 0)
 		goto out_destroy_group;
 
+	group->fanotify_data.flags = flags;
 	return fd;
 
 out_destroy_group:
