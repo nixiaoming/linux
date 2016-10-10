@@ -929,6 +929,18 @@ SYSCALL_DEFINE5(fanotify_mark, int, fanotify_fd, unsigned int, flags,
 	    group->fanotify_data.flags & FAN_EVENT_INFO_PARENT)
 		mnt = path.mnt;
 
+	/*
+	 * New dentry events may pass parent directory's path on event fd,
+	 * which may break old programs that request FAN_ALL_EVENTS.
+	 * Ignore dentry events unless user explicitly set the new
+	 * FAN_EVENT_INFO_PARENT flag to fanotify_init().
+	 * Mount watch cannot get dentry events, because the mount point
+	 * from which those events were created is unavailable inforamtion.
+	 */
+	if ((flags & FAN_MARK_MOUNT) ||
+	    !(group->fanotify_data.flags & FAN_EVENT_INFO_PARENT))
+		mask &= ~FAN_DENTRY_EVENTS;
+
 	/* create/update an inode mark */
 	switch (flags & (FAN_MARK_ADD | FAN_MARK_REMOVE)) {
 	case FAN_MARK_ADD:
