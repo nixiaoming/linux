@@ -54,7 +54,28 @@ FANOTIFY_PE(struct fsnotify_event *fse)
 {
 	return container_of(fse, struct fanotify_perm_event_info, fae.fse);
 }
+
+/* Should use fanotify_perm_event_info for this event? */
+static inline bool FANOTIFY_IS_PE(struct fsnotify_event *fse)
+{
+	return fse->mask & FAN_ALL_PERM_EVENTS;
+}
+#else
+static inline bool FANOTIFY_IS_PE(struct fsnotify_event *fse)
+{
+	return false;
+}
 #endif
+
+/* Should use fanotify_file_event_info for this event? */
+static inline bool FANOTIFY_IS_FE(struct fsnotify_event *fse)
+{
+	if (FANOTIFY_IS_PE(fse))
+		return false;
+
+	/* Non permission events reported on root may carry file info */
+	return fse->mask & (FAN_FILENAME_EVENTS | FAN_EVENT_ON_SB);
+}
 
 static inline struct fanotify_file_event_info *
 FANOTIFY_FE(struct fsnotify_event *fse)

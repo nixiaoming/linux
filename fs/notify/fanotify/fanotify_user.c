@@ -229,7 +229,7 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	if (ret < 0)
 		return ret;
 
-	if ((event->mask & FAN_FILENAME_EVENTS) &&
+	if (FANOTIFY_IS_FE(event) &&
 	    (group->fanotify_data.flags & FAN_EVENT_INFO_NAME)) {
 		ffe = FANOTIFY_FE(event);
 		pad_name_len = round_event_name_len(ffe);
@@ -261,7 +261,7 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	}
 
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
-	if (event->mask & FAN_ALL_PERM_EVENTS)
+	if (FANOTIFY_IS_PE(event))
 		FANOTIFY_PE(event)->fd = fd;
 #endif
 
@@ -348,7 +348,7 @@ static ssize_t fanotify_read(struct file *file, char __user *buf,
 		 * Permission events get queued to wait for response.  Other
 		 * events can be destroyed now.
 		 */
-		if (!(kevent->mask & FAN_ALL_PERM_EVENTS)) {
+		if (!FANOTIFY_IS_PE(kevent)) {
 			fsnotify_destroy_event(group, kevent);
 		} else {
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
@@ -438,7 +438,7 @@ static int fanotify_release(struct inode *ignored, struct file *file)
 	 */
 	while (!fsnotify_notify_queue_is_empty(group)) {
 		fsn_event = fsnotify_remove_first_event(group);
-		if (!(fsn_event->mask & FAN_ALL_PERM_EVENTS)) {
+		if (!FANOTIFY_IS_PE(fsn_event)) {
 			spin_unlock(&group->notification_lock);
 			fsnotify_destroy_event(group, fsn_event);
 			spin_lock(&group->notification_lock);
