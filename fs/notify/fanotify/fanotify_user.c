@@ -721,7 +721,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	struct user_struct *user;
 	struct fanotify_event_info *oevent;
 
-	pr_debug("%s: flags=%d event_f_flags=%d\n",
+	pr_debug("%s: flags=%x event_f_flags=%x\n",
 		__func__, flags, event_f_flags);
 
 	if (!capable(CAP_SYS_ADMIN))
