@@ -146,9 +146,14 @@ static int fill_event_metadata(struct fsnotify_group *group,
 {
 	int ret = 0;
 	struct fanotify_event_info *event;
+	__u32 user_mask = FAN_ALL_OUTGOING_EVENTS;
 
 	pr_debug("%s: group=%p metadata=%p event=%p\n", __func__,
 		 group, metadata, fsn_event);
+
+	/* FAN_ONDIR is important for dentry events */
+	if (group->fanotify_data.flags & FAN_EVENT_INFO_PARENT)
+		user_mask |= FAN_ONDIR;
 
 	*file = NULL;
 	event = container_of(fsn_event, struct fanotify_event_info, fse);
@@ -156,7 +161,7 @@ static int fill_event_metadata(struct fsnotify_group *group,
 	metadata->metadata_len = FAN_EVENT_METADATA_LEN;
 	metadata->vers = FANOTIFY_METADATA_VERSION;
 	metadata->reserved = 0;
-	metadata->mask = fsn_event->mask & FAN_ALL_OUTGOING_EVENTS;
+	metadata->mask = fsn_event->mask & user_mask;
 	metadata->pid = pid_vnr(event->tgid);
 	if (unlikely(fsn_event->mask & FAN_Q_OVERFLOW) ||
 		!event->path.mnt || !event->path.dentry) {
