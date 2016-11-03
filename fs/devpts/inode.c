@@ -549,7 +549,7 @@ struct dentry *devpts_pty_new(struct pts_fs_info *fsi, int index, void *priv)
 	if (dentry) {
 		dentry->d_fsdata = priv;
 		d_add(dentry, inode);
-		fsnotify_create(d_inode(root), dentry);
+		fsnotify_create(dentry);
 	} else {
 		iput(inode);
 		dentry = ERR_PTR(-ENOMEM);

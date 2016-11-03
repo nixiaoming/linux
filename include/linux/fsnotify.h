@@ -47,6 +47,12 @@ static inline int fsnotify_d_name(struct dentry *dentry, __u32 mask)
 				 dentry->d_name.name, 0);
 }
 
+static inline void audit_dentry_child(const struct dentry *dentry,
+				      const unsigned char type)
+{
+	audit_inode_child(d_inode(dentry->d_parent), dentry, type);
+}
+
 /* simple call site for access decisions */
 static inline int fsnotify_perm(struct file *file, int mask)
 {
@@ -115,7 +121,7 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 
 	if (source)
 		fsnotify(source, FS_MOVE_SELF, moved, FSNOTIFY_EVENT_DENTRY, NULL, 0);
-	audit_inode_child(new_dir, moved, AUDIT_TYPE_CHILD_CREATE);
+	audit_dentry_child(moved, AUDIT_TYPE_CHILD_CREATE);
 }
 
 /*
@@ -159,9 +165,9 @@ static inline void fsnotify_inoderemove(struct inode *inode)
 /*
  * fsnotify_create - 'name' was linked in
  */
-static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
+static inline void fsnotify_create(struct dentry *dentry)
 {
-	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
+	audit_dentry_child(dentry, AUDIT_TYPE_CHILD_CREATE);
 
 	fsnotify_d_name(dentry, FS_CREATE);
 }
@@ -171,10 +177,10 @@ static inline void fsnotify_create(struct inode *inode, struct dentry *dentry)
  * Note: We have to pass also the linked inode ptr as some filesystems leave
  *   new_dentry->d_inode NULL and instantiate inode pointer later
  */
-static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct dentry *new_dentry)
+static inline void fsnotify_link(struct inode *inode, struct dentry *new_dentry)
 {
 	fsnotify_link_count(inode);
-	audit_inode_child(dir, new_dentry, AUDIT_TYPE_CHILD_CREATE);
+	audit_dentry_child(new_dentry, AUDIT_TYPE_CHILD_CREATE);
 
 	fsnotify_d_name(new_dentry, FS_CREATE);
 }
@@ -182,11 +188,11 @@ static inline void fsnotify_link(struct inode *dir, struct inode *inode, struct 
 /*
  * fsnotify_mkdir - directory 'name' was created
  */
-static inline void fsnotify_mkdir(struct inode *inode, struct dentry *dentry)
+static inline void fsnotify_mkdir(struct dentry *dentry)
 {
 	__u32 mask = (FS_CREATE | FS_ISDIR);
 
-	audit_inode_child(inode, dentry, AUDIT_TYPE_CHILD_CREATE);
+	audit_dentry_child(dentry, AUDIT_TYPE_CHILD_CREATE);
 
 	fsnotify_d_name(dentry, mask);
 }
