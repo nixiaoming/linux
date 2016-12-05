@@ -887,6 +887,14 @@ static bool ovl_type_merge_or_lower(struct dentry *dentry)
 {
 	enum ovl_path_type type = ovl_path_type(dentry);
 
+	if (ovl_is_snapshot_fs_type(dentry->d_sb)) {
+		struct dentry *snap = ovl_snapshot_dentry(dentry);
+
+		/* No redirect if snapshot is whiteout or opaque */
+		if (snap && snap->d_inode)
+			type = ovl_path_type(snap);
+	}
+
 	return OVL_TYPE_MERGE(type) || !OVL_TYPE_UPPER(type);
 }
 
