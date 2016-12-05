@@ -875,6 +875,18 @@ static bool ovl_type_merge_or_lower(struct dentry *dentry)
 	return OVL_TYPE_MERGE(type) || !OVL_TYPE_UPPER(type);
 }
 
+static bool ovl_snapshot_type_merge_or_lower(struct dentry *dentry)
+{
+	struct dentry *snap = ovl_snapshot_dentry(dentry);
+	bool ret = ovl_type_merge_or_lower(dentry);
+
+	if (ret || !snap || !snap->d_inode)
+		return ret;
+
+	/* Could be upper for us and merge for underlying snapshot */
+	return ovl_type_merge_or_lower(snap);
+}
+
 static bool ovl_can_move(struct dentry *dentry)
 {
 	return ovl_redirect_dir(dentry->d_sb) ||
@@ -1133,7 +1145,7 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 
 	err = 0;
 	if (is_dir) {
-		if (ovl_type_merge_or_lower(old))
+		if (ovl_snapshot_type_merge_or_lower(old))
 			err = ovl_set_redirect(old, samedir);
 		else if (!old_opaque && ovl_type_merge(new->d_parent))
 			err = ovl_set_opaque_xerr(old, olddentry, -EXDEV);
@@ -1141,7 +1153,7 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 			goto out_dput;
 	}
 	if (!overwrite && new_is_dir) {
-		if (ovl_type_merge_or_lower(new))
+		if (ovl_snapshot_type_merge_or_lower(new))
 			err = ovl_set_redirect(new, samedir);
 		else if (!new_opaque && ovl_type_merge(old->d_parent))
 			err = ovl_set_opaque_xerr(new, newdentry, -EXDEV);
