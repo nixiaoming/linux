@@ -105,11 +105,12 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 				       struct path *path, int data_type)
 {
 	__u32 marks_mask, marks_ignored_mask;
+	struct vfsmount *mark_mnt = inode_mark ? inode_mark->mnt : NULL;
 	struct dentry *dentry = path->dentry;
 
-	pr_debug("%s: inode_mark=%p vfsmnt_mark=%p mask=%x"
+	pr_debug("%s: inode_mark=%p vfsmnt_mark=%p mark_mnt=%p mask=%x"
 		 " data_type=%d\n", __func__, inode_mark, vfsmnt_mark,
-		 event_mask, data_type);
+		 mark_mnt, event_mask, data_type);
 
 	/* if we don't have enough info to send an event to userspace say no */
 	if (data_type != FSNOTIFY_EVENT_PATH &&
@@ -156,6 +157,14 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 
 	if (!(event_mask & FAN_ALL_OUTGOING_EVENTS & marks_mask &
 	      ~marks_ignored_mask))
+		return false;
+
+	/*
+	 * Only interesetd in dentry events visible from the mount
+	 * from which the root watch was added
+	 */
+	if (mark_mnt && mark_mnt->mnt_root != dentry &&
+	    d_ancestor(mark_mnt->mnt_root, dentry) == NULL)
 		return false;
 
 	return true;
