@@ -297,6 +297,19 @@ static inline int fsnotify_inode_watches_children(struct inode *inode)
 	return inode->i_fsnotify_mask & FS_EVENTS_POSS_ON_CHILD;
 }
 
+static inline int fsnotify_sb_root_watches_descendants(struct dentry *dentry)
+{
+	struct inode *root = dentry->d_sb->s_root->d_inode;
+
+	/* All FS_EVENT_ON_DESCENDANTS flags are set if root inode may care */
+	if ((root->i_fsnotify_mask & FS_EVENT_ON_DESCENDANT) !=
+	     FS_EVENT_ON_DESCENDANT)
+		return 0;
+	/* root inode might care about distant child events, does it care about
+	 * the specific set of events that can happen on a child? */
+	return root->i_fsnotify_mask & FS_EVENTS_POSS_ON_CHILD;
+}
+
 /*
  * Update the dentry with a flag indicating the interest of its parent to receive
  * filesystem events when those events happens to this dentry->d_inode.

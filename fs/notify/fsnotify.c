@@ -95,11 +95,16 @@ int __fsnotify_parent(struct path *path, struct dentry *dentry, __u32 mask)
 	if (!dentry)
 		dentry = path->dentry;
 
-	if (!(dentry->d_flags & DCACHE_FSNOTIFY_PARENT_WATCHED))
+	if (dentry->d_flags & DCACHE_FSNOTIFY_PARENT_WATCHED) {
+		parent = dget_parent(dentry);
+	} else if (unlikely(fsnotify_sb_root_watches_descendants(dentry)) &&
+		   !(mask & FS_ISDIR)) {
+		/* Parent is not watching, but root inode is watching */
+		parent = dget(dentry->d_sb->s_root);
+	} else {
 		return 0;
-
-	parent = dget_parent(dentry);
-	p_inode = parent->d_inode;
+	}
+	p_inode = d_inode(parent);
 
 	if (unlikely(!fsnotify_inode_watches_children(p_inode)))
 		__fsnotify_update_child_dentry_flags(p_inode);
