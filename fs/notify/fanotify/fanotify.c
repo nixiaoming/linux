@@ -161,7 +161,8 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 	return true;
 }
 
-struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
+struct fanotify_event_info *fanotify_alloc_event(struct fsnotify_group *group,
+						 struct inode *inode, u32 mask,
 						 struct path *path,
 						 const char *file_name)
 {
@@ -196,19 +197,42 @@ struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
 	if (mask & (FAN_FILENAME_EVENTS | FAN_EVENT_ON_SB)) {
 		struct fanotify_file_event_info *ffe;
 		int alloc_len = sizeof(*ffe);
-		int len = 0;
+		int name_len = 0;
 
-		if ((mask & FAN_FILENAME_EVENTS) && file_name) {
-			len = strlen(file_name);
-			alloc_len += len + 1;
+		if ((mask & FAN_FILENAME_EVENTS) && file_name &&
+		    (group->fanotify_data.flags & FAN_EVENT_INFO_NAME)) {
+			name_len = strlen(file_name);
+			alloc_len += name_len + 1;
 		}
 		ffe = kmalloc(alloc_len, GFP_KERNEL);
 		if (!ffe)
 			return NULL;
 		event = &ffe->fae;
-		ffe->name_len = len;
-		if (len)
+		ffe->name_len = name_len;
+		if (name_len)
 			strcpy(ffe->name, file_name);
+
+		ffe->fh.handle_type = FILEID_INVALID;
+		ffe->fh.handle_bytes = 0;
+		if ((mask & FAN_EVENT_ON_SB) &&
+		    (group->fanotify_data.flags & FAN_EVENT_INFO_FH)) {
+			/*
+			 * Encode only parent (dentry) for filename events
+			 * and both parent and child for other events.
+			 * ffe->fid is big enough to encode xfs type 0x82:
+			 * 64bit parent+child inodes and 32bit generations
+			 */
+			int handle_dwords = sizeof(ffe->fid) >> 2;
+			int type = exportfs_encode_fh(path->dentry,
+					(struct fid *)&ffe->fid,
+					&handle_dwords,
+					!(mask & FAN_FILENAME_EVENTS));
+
+			if (type > 0 && type < FILEID_INVALID) {
+				ffe->fh.handle_type = type;
+				ffe->fh.handle_bytes = handle_dwords << 2;
+			}
+		}
 		goto init;
 	}
 
@@ -275,7 +299,7 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 	pr_debug("%s: group=%p inode=%p mask=%x\n", __func__, group, inode,
 		 mask);
 
-	event = fanotify_alloc_event(inode, mask, &path, file_name);
+	event = fanotify_alloc_event(group, inode, mask, &path, file_name);
 	if (unlikely(!event))
 		return -ENOMEM;
 

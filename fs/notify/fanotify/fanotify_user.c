@@ -44,6 +44,20 @@ static struct kmem_cache *fanotify_mark_cache __read_mostly;
 struct kmem_cache *fanotify_event_cachep __read_mostly;
 struct kmem_cache *fanotify_perm_event_cachep __read_mostly;
 
+static int round_event_data_len(struct fanotify_file_event_info *event)
+{
+	int data_len = 0;
+
+	if (!event->name_len && !event->fh.handle_bytes)
+		return 0;
+
+	if (event->name_len)
+		data_len += event->name_len + 1;
+	if (event->fh.handle_bytes)
+		data_len +=  sizeof(event->fh) + event->fh.handle_bytes;
+	return roundup(data_len, FAN_EVENT_METADATA_LEN);
+}
+
 /*
  * Get an fsnotify notification event if one exists and is small
  * enough to fit in "count". Return an error pointer if the count
@@ -54,14 +68,23 @@ struct kmem_cache *fanotify_perm_event_cachep __read_mostly;
 static struct fsnotify_event *get_one_event(struct fsnotify_group *group,
 					    size_t count)
 {
-	assert_spin_locked(&group->notification_lock);
+	size_t event_size = FAN_EVENT_METADATA_LEN;
+	struct fsnotify_event *event;
 
-	pr_debug("%s: group=%p count=%zd\n", __func__, group, count);
+	assert_spin_locked(&group->notification_lock);
 
 	if (fsnotify_notify_queue_is_empty(group))
 		return NULL;
 
-	if (FAN_EVENT_METADATA_LEN > count)
+	event = fsnotify_peek_first_event(group);
+
+	pr_debug("%s: group=%p event=%p count=%zd\n", __func__,
+		 group, event, count);
+
+	if (FANOTIFY_IS_FE(event))
+		event_size += round_event_data_len(FANOTIFY_FE(event));
+
+	if (event_size > count)
 		return ERR_PTR(-EINVAL);
 
 	/* held the notification_lock the whole time, so this is the
@@ -206,13 +229,6 @@ static int process_access_response(struct fsnotify_group *group,
 }
 #endif
 
-static int round_event_name_len(struct fanotify_file_event_info *event)
-{
-	if (!event->name_len)
-		return 0;
-	return roundup(event->name_len + 1, FAN_EVENT_METADATA_LEN);
-}
-
 static ssize_t copy_event_to_user(struct fsnotify_group *group,
 				  struct fsnotify_event *event,
 				  char __user *buf)
@@ -221,7 +237,7 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	struct fanotify_file_event_info *ffe = NULL;
 	struct file *f;
 	int fd, ret;
-	size_t pad_name_len = 0;
+	size_t pad_data_len = 0;
 
 	pr_debug("%s: group=%p event=%p\n", __func__, group, event);
 
@@ -230,10 +246,11 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 		return ret;
 
 	if (FANOTIFY_IS_FE(event) &&
-	    (group->fanotify_data.flags & FAN_EVENT_INFO_NAME)) {
+	    (group->fanotify_data.flags &
+	     (FAN_EVENT_INFO_NAME | FAN_EVENT_INFO_FH))) {
 		ffe = FANOTIFY_FE(event);
-		pad_name_len = round_event_name_len(ffe);
-		fanotify_event_metadata.event_len += pad_name_len;
+		pad_data_len = round_event_data_len(ffe);
+		fanotify_event_metadata.event_len += pad_data_len;
 	}
 
 	fd = fanotify_event_metadata.fd;
@@ -249,14 +266,27 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 	 * with zeros.
 	 */
 	ret = -EFAULT;
-	if (ffe && pad_name_len) {
-		/* copy the filename */
-		if (copy_to_user(buf, ffe->name, ffe->name_len))
-			goto out_close_fd;
-		buf += ffe->name_len;
+	if (ffe && pad_data_len) {
+		if (ffe->fh.handle_bytes) {
+			int fh_len = sizeof(ffe->fh) + ffe->fh.handle_bytes;
+
+			/* copy the file handle (bytes,type,fid) */
+			if (copy_to_user(buf, &ffe->fh, fh_len))
+				goto out_close_fd;
+			buf += fh_len;
+			pad_data_len -= fh_len;
+		}
+
+		if (ffe->name_len) {
+			/* copy the filename */
+			if (copy_to_user(buf, ffe->name, ffe->name_len))
+				goto out_close_fd;
+			buf += ffe->name_len;
+			pad_data_len -= ffe->name_len;
+		}
 
 		/* fill userspace with 0's */
-		if (clear_user(buf, pad_name_len - ffe->name_len))
+		if (clear_user(buf, pad_data_len))
 			goto out_close_fd;
 	}
 
@@ -813,7 +843,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	group->fanotify_data.user = user;
 	atomic_inc(&user->fanotify_listeners);
 
-	oevent = fanotify_alloc_event(NULL, FS_Q_OVERFLOW, NULL, NULL);
+	oevent = fanotify_alloc_event(group, NULL, FS_Q_OVERFLOW, NULL, NULL);
 	if (unlikely(!oevent)) {
 		fd = -ENOMEM;
 		goto out_destroy_group;

@@ -51,8 +51,10 @@
 /* These bits determine the format of the reported events */
 #define FAN_EVENT_INFO_PARENT	0x00000100	/* Event fd maybe of parent */
 #define FAN_EVENT_INFO_NAME	0x00000200	/* Event data has filename */
+#define FAN_EVENT_INFO_FH	0x00000400	/* Event data has filehandle */
 #define FAN_ALL_EVENT_INFO_BITS (FAN_EVENT_INFO_PARENT | \
-				 FAN_EVENT_INFO_NAME)
+				 FAN_EVENT_INFO_NAME | \
+				 FAN_EVENT_INFO_FH)
 
 #define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
 				 FAN_ALL_CLASS_BITS | \
