@@ -323,9 +323,45 @@ bug:
 	return dentry;
 }
 
+/*
+ * Returns 1 if both snapdentry and snapmnt are NULL or
+ * if snapdentry and snapmnt point to the same super block.
+ *
+ * Returns 0 if snapdentry is NULL and snapmnt is not NULL or
+ * if snapdentry and snapmnt point to different super blocks.
+ * This will cause vfs lookup to invalidate this dentry and call ovl_lookup()
+ * again to re-lookup snapdentry from the current snapmnt.
+ */
+static int ovl_snapshot_revalidate(struct dentry *dentry, unsigned int flags)
+{
+	struct path snappath = { };
+	int err;
+
+	if (flags & LOOKUP_RCU) {
+		struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
+		struct ovl_entry *oe = dentry->d_fsdata;
+
+		err = ovl_snapshot_dentry_is_valid(
+				rcu_dereference(oe->__snapdentry),
+				rcu_dereference(ofs->__snapmnt));
+	} else {
+		err = ovl_snapshot_path(dentry, &snappath);
+		path_put(&snappath);
+	}
+
+	if (likely(!err))
+		return 1;
+
+	if (err == -ESTALE || err == -ENOENT)
+	       return 0;
+
+	return err;
+}
+
 const struct dentry_operations ovl_snapshot_dentry_operations = {
 	.d_release = ovl_dentry_release,
 	.d_real = ovl_snapshot_d_real,
+	.d_revalidate = ovl_snapshot_revalidate,
 };
 
 /* Explicitly whiteout a negative snapshot mount dentry before create */
