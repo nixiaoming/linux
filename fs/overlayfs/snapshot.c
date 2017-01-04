@@ -108,25 +108,54 @@ int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
 		.upperdir = NULL,
 		.workdir = NULL,
 	};
+	char *nosnapshot = NULL;
 	int err;
 
-	if (data)
-		pr_info("%s: '%s'\n", __func__, (char *)data);
+	if (!data)
+		return 0;
+
+	pr_info("%s: -o'%s'\n", __func__, (char *)data);
+
+	/*
+	 * Set config.snapshot to an empty string and parse remount options.
+	 * If no new snapshot= option nor nosnapshot option was found,
+	 * config.snapshot will remain an empty string and nothing will change.
+	 * If snapshot= option will set a new config.snapshot value or
+	 * nosnapshot option will free the empty string, then we will
+	 * change the snapshot overlay to the new one or to NULL.
+	 */
+	if (ufs->config.snapshot) {
+		err = -ENOMEM;
+		nosnapshot = kstrdup("", GFP_KERNEL);
+		if (!nosnapshot)
+			return err;
+		config.snapshot = nosnapshot;
+	}
 
 	err = ovl_parse_opt((char *)data, &config, true);
 	if (err)
 		goto out_free_config;
 
-	if ((!config.snapshot && !ufs->config.snapshot) ||
-	    (config.snapshot && ufs->config.snapshot &&
-	     strcmp(config.snapshot, ufs->config.snapshot) == 0))
+	/*
+	 * If parser did not change empty string or if parser found
+	 * 'nosnapshot' and there is no snapshot - do nothing
+	 */
+	if ((config.snapshot && !*config.snapshot) ||
+	    (!config.snapshot && !ufs->config.snapshot))
 		goto out_free_config;
+
+	pr_debug("%s: old snapshot='%s'\n", __func__, ufs->config.snapshot);
 
 	if (config.snapshot) {
 		err = ovl_snapshot_dir(config.snapshot, &snappath,
 				       ufs, sb);
 		if (err)
 			goto out_free_config;
+
+		/* If new snappath is same sb as old snapmnt - do nothing */
+		if (ufs->__snapmnt &&
+		    ufs->__snapmnt->mnt_sb == snappath.mnt->mnt_sb)
+			goto out_put_snappath;
 
 		snapmnt = ovl_snapshot_mount(&snappath, ufs);
 		if (IS_ERR(snapmnt)) {
@@ -136,6 +165,8 @@ int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
 
 		snaproot = dget(snappath.dentry);
 	}
+
+	pr_debug("%s: new snapshot='%s'\n", __func__, config.snapshot);
 
 	kfree(ufs->config.snapshot);
 	ufs->config.snapshot = config.snapshot;

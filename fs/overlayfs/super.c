@@ -310,12 +310,14 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 
 	if (ufs->config.lowerdir)
 		seq_show_option(m, "lowerdir", ufs->config.lowerdir);
-	if (ufs->config.snapshot)
-		seq_show_option(m, "snapshot", ufs->config.snapshot);
 	if (ufs->config.upperdir)
 		seq_show_option(m, "upperdir", ufs->config.upperdir);
 	if (ufs->config.workdir)
 		seq_show_option(m, "workdir", ufs->config.workdir);
+	if (ufs->config.snapshot)
+		seq_show_option(m, "snapshot", ufs->config.snapshot);
+	else if (ovl_is_snapshot_fs_type(sb))
+		seq_puts(m, ",nosnapshot");
 	if (ufs->config.default_permissions)
 		seq_puts(m, ",default_permissions");
 	if (ufs->config.redirect_dir != ovl_redirect_dir_def)
@@ -379,6 +381,7 @@ enum {
 	/* mount options that can be changed on remount: */
 	OPT_REMOUNT_FIRST,
 	OPT_SNAPSHOT = OPT_REMOUNT_FIRST,
+	OPT_NOSNAPSHOT,
 	OPT_ERR,
 };
 
@@ -395,6 +398,7 @@ static const match_table_t ovl_tokens = {
 	{OPT_VERIFY_DIR,		"verify_dir"},
 	{OPT_CONSISTENT_FD,		"consistent_fd"},
 	{OPT_SNAPSHOT,			"snapshot=%s"},
+	{OPT_NOSNAPSHOT,		"nosnapshot"},
 	{OPT_ERR,			NULL}
 };
 
@@ -497,6 +501,11 @@ int ovl_parse_opt(char *opt, struct ovl_config *config, bool remount)
 			config->snapshot = match_strdup(&args[0]);
 			if (!config->snapshot)
 				return -ENOMEM;
+			break;
+
+		case OPT_NOSNAPSHOT:
+			kfree(config->snapshot);
+			config->snapshot = NULL;
 			break;
 #endif
 		default:
