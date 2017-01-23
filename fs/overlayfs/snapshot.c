@@ -162,6 +162,20 @@ static const struct dentry_operations ovl_snapshot_dentry_operations = {
 	.d_real = ovl_d_real,
 };
 
+static int ovl_snapshot_freeze(struct super_block *sb)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	return freeze_super(ofs->upper_mnt->mnt_sb);
+}
+
+static int ovl_snapshot_unfreeze(struct super_block *sb)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	return thaw_super(ofs->upper_mnt->mnt_sb);
+}
+
 static int ovl_snapshot_show_options(struct seq_file *m, struct dentry *dentry)
 {
 	struct super_block *sb = dentry->d_sb;
@@ -188,6 +202,8 @@ static const struct super_operations ovl_snapshot_super_operations = {
 	.drop_inode	= generic_delete_inode,
 	.put_super	= ovl_put_super,
 	.sync_fs	= ovl_sync_fs,
+	.freeze_fs	= ovl_snapshot_freeze,
+	.unfreeze_fs	= ovl_snapshot_unfreeze,
 	.statfs		= ovl_statfs,
 	.show_options	= ovl_snapshot_show_options,
 	.remount_fs	= ovl_snapshot_remount,
