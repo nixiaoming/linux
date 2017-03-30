@@ -372,6 +372,8 @@ extern const struct export_operations ovl_export_operations;
 /* super.c */
 void ovl_dentry_release(struct dentry *dentry);
 int ovl_check_append_only(struct inode *inode, int flag);
+struct ovl_config;
+int ovl_parse_opt(char *opt, struct ovl_config *config, bool remount);
 struct ovl_fs;
 int ovl_lower_dir(const char *name, struct path *path,
 		  struct ovl_fs *ofs, int *stack_depth, bool *remote);
@@ -387,6 +389,7 @@ void ovl_snapshot_fs_unregister(void);
 int ovl_snapshot_dir(const char *name, struct path *path,
 		     struct ovl_fs *ofs, struct super_block *sb);
 struct vfsmount *ovl_snapshot_mount(struct path *path, struct ovl_fs *ufs);
+int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data);
 struct dentry *ovl_snapshot_dentry(struct dentry *dentry);
 int ovl_snapshot_lookup(struct dentry *parent, struct ovl_lookup_data *d,
 			struct dentry **ret);
@@ -416,6 +419,12 @@ static inline struct vfsmount *ovl_snapshot_mount(struct path *path,
 						  struct ovl_fs *ufs)
 {
 	return NULL;
+}
+
+static inline int ovl_snapshot_remount(struct super_block *sb, int *flags,
+				       char *data)
+{
+	return -EINVAL;
 }
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)

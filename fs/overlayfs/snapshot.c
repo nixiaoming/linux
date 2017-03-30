@@ -95,6 +95,71 @@ struct vfsmount *ovl_snapshot_mount(struct path *path, struct ovl_fs *ufs)
 	return snapmnt;
 }
 
+int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
+{
+	struct ovl_fs *ufs = sb->s_fs_info;
+	struct ovl_entry *roe = sb->s_root->d_fsdata;
+	struct path snappath = { };
+	struct vfsmount *snapmnt = NULL;
+	struct dentry *snaproot = NULL;
+	struct ovl_config config = {
+		.snapshot = NULL,
+		.lowerdir = NULL,
+		.upperdir = NULL,
+		.workdir = NULL,
+	};
+	int err;
+
+	if (data)
+		pr_info("%s: '%s'\n", __func__, (char *)data);
+
+	err = ovl_parse_opt((char *)data, &config, true);
+	if (err)
+		goto out_free_config;
+
+	if ((!config.snapshot && !ufs->config.snapshot) ||
+	    (config.snapshot && ufs->config.snapshot &&
+	     strcmp(config.snapshot, ufs->config.snapshot) == 0))
+		goto out_free_config;
+
+	if (config.snapshot) {
+		err = ovl_snapshot_dir(config.snapshot, &snappath,
+				       ufs, sb);
+		if (err)
+			goto out_free_config;
+
+		snapmnt = ovl_snapshot_mount(&snappath, ufs);
+		if (IS_ERR(snapmnt)) {
+			err = PTR_ERR(snapmnt);
+			goto out_put_snappath;
+		}
+
+		snaproot = dget(snappath.dentry);
+	}
+
+	kfree(ufs->config.snapshot);
+	ufs->config.snapshot = config.snapshot;
+	config.snapshot = NULL;
+
+	/* prepare to drop old snapshot overlay */
+	path_put(&snappath);
+	snappath.mnt = ufs->__snapmnt;
+	snappath.dentry = roe->__snapdentry;
+	rcu_assign_pointer(ufs->__snapmnt, snapmnt);
+	rcu_assign_pointer(roe->__snapdentry, snaproot);
+	/* wait grace period before dropping old snapshot overlay */
+	synchronize_rcu();
+
+out_put_snappath:
+	path_put(&snappath);
+out_free_config:
+	kfree(config.snapshot);
+	kfree(config.lowerdir);
+	kfree(config.upperdir);
+	kfree(config.workdir);
+	return err;
+}
+
 static int ovl_snapshot_dentry_is_valid(struct dentry *snapdentry,
 					struct vfsmount *snapmnt)
 {

@@ -336,6 +336,9 @@ static int ovl_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct ovl_fs *ufs = sb->s_fs_info;
 
+	if (ovl_is_snapshot_fs_type(sb))
+		return ovl_snapshot_remount(sb, flags, data);
+
 	if (*flags & MS_RDONLY)
 		return 0;
 
@@ -362,7 +365,6 @@ static const struct super_operations ovl_super_operations = {
 };
 
 enum {
-	OPT_SNAPSHOT,
 	OPT_LOWERDIR,
 	OPT_UPPERDIR,
 	OPT_WORKDIR,
@@ -374,11 +376,13 @@ enum {
 	OPT_INDEX_ALL,
 	OPT_VERIFY_DIR,
 	OPT_CONSISTENT_FD,
+	/* mount options that can be changed on remount: */
+	OPT_REMOUNT_FIRST,
+	OPT_SNAPSHOT = OPT_REMOUNT_FIRST,
 	OPT_ERR,
 };
 
 static const match_table_t ovl_tokens = {
-	{OPT_SNAPSHOT,			"snapshot=%s"},
 	{OPT_LOWERDIR,			"lowerdir=%s"},
 	{OPT_UPPERDIR,			"upperdir=%s"},
 	{OPT_WORKDIR,			"workdir=%s"},
@@ -390,6 +394,7 @@ static const match_table_t ovl_tokens = {
 	{OPT_INDEX_ALL,			"index=all"},
 	{OPT_VERIFY_DIR,		"verify_dir"},
 	{OPT_CONSISTENT_FD,		"consistent_fd"},
+	{OPT_SNAPSHOT,			"snapshot=%s"},
 	{OPT_ERR,			NULL}
 };
 
@@ -416,7 +421,7 @@ static char *ovl_next_opt(char **s)
 	return sbegin;
 }
 
-static int ovl_parse_opt(char *opt, struct ovl_config *config)
+int ovl_parse_opt(char *opt, struct ovl_config *config, bool remount)
 {
 	char *p;
 
@@ -428,6 +433,10 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			continue;
 
 		token = match_token(p, ovl_tokens, args);
+		/* Ignore options that cannot be changed on remount */
+		if (remount && token < OPT_REMOUNT_FIRST)
+			continue;
+
 		switch (token) {
 		case OPT_UPPERDIR:
 			kfree(config->upperdir);
@@ -496,7 +505,7 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 		}
 	}
 
-	if (!config->upperdir) {
+	if (!config->upperdir && !remount) {
 		/* Workdir is useless in non-upper mount */
 		if (config->workdir) {
 			pr_info("overlayfs: option \"workdir=%s\" is useless in a non-upper mount, ignore\n",
@@ -912,7 +921,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 	ufs->config.redirect_dir = ovl_redirect_dir_def;
 	ufs->config.index = (enum ovl_index) ovl_index_def;
-	err = ovl_parse_opt((char *) data, &ufs->config);
+	err = ovl_parse_opt((char *) data, &ufs->config, false);
 	if (err)
 		goto out_free_config;
 
