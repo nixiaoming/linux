@@ -118,10 +118,8 @@ struct vfsmount *ovl_snapshot_mount(struct path *path, struct ovl_fs *ufs)
 int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct ovl_fs *ufs = sb->s_fs_info;
-	struct ovl_entry *roe = sb->s_root->d_fsdata;
 	struct path snappath = { };
 	struct vfsmount *snapmnt = NULL;
-	struct dentry *snaproot = NULL;
 	struct ovl_config config = {
 		.snapshot = NULL,
 		.lowerdir = NULL,
@@ -142,7 +140,7 @@ int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
 	 * config.snapshot will remain an empty string and nothing will change.
 	 * If snapshot= option will set a new config.snapshot value or
 	 * nosnapshot option will free the empty string, then we will
-	 * change the snapshot overlay to the new one or to NULL.
+	 * change the requested snapshot overlay to the new one or to NULL.
 	 */
 	if (ufs->config.snapshot) {
 		err = -ENOMEM;
@@ -156,15 +154,17 @@ int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
 	if (err)
 		goto out_free_config;
 
-	/*
-	 * If parser did not change empty string or if parser found
-	 * 'nosnapshot' and there is no snapshot - do nothing
-	 */
-	if ((config.snapshot && !*config.snapshot) ||
-	    (!config.snapshot && !ufs->config.snapshot))
+	/* If no old snapshot nor new snapshot - do nothing */
+	if (!config.snapshot && !ufs->config.snapshot)
 		goto out_free_config;
 
-	pr_debug("%s: old snapshot='%s'\n", __func__, ufs->config.snapshot);
+	/* If options did not have snapshot= - do not change snapshot */
+	if (config.snapshot && !*config.snapshot)
+		goto same_snapshot;
+
+	pr_debug("%s: old snapshot='%s' sid='%s'\n", __func__,
+		 ufs->config.snapshot,
+		 ufs->snap_mnt ? ufs->snap_mnt->mnt_sb->s_id : "");
 
 	if (config.snapshot) {
 		err = ovl_snapshot_dir(config.snapshot, &snappath,
@@ -172,34 +172,39 @@ int ovl_snapshot_remount(struct super_block *sb, int *flags, char *data)
 		if (err)
 			goto out_free_config;
 
-		/* If new snappath is same sb as old snapmnt - do nothing */
-		if (ufs->__snapmnt &&
-		    ufs->__snapmnt->mnt_sb == snappath.mnt->mnt_sb)
-			goto out_put_snappath;
+		/* The same snapshot path may be a new overlay mount */
+		if (ufs->snap_mnt &&
+		    ufs->snap_mnt->mnt_sb == snappath.mnt->mnt_sb)
+			goto same_snapshot;
 
 		snapmnt = ovl_snapshot_mount(&snappath, ufs);
 		if (IS_ERR(snapmnt)) {
 			err = PTR_ERR(snapmnt);
 			goto out_put_snappath;
 		}
-
-		snaproot = dget(snappath.dentry);
 	}
 
-	pr_debug("%s: new snapshot='%s'\n", __func__, config.snapshot);
+	pr_debug("%s: new snapshot='%s' sid='%s'\n", __func__,
+		 config.snapshot,
+		 snapmnt ? snapmnt->mnt_sb->s_id : "");
 
 	kfree(ufs->config.snapshot);
 	ufs->config.snapshot = config.snapshot;
 	config.snapshot = NULL;
 
-	/* prepare to drop old snapshot overlay */
+	/* Set new requested snapshot overlay */
 	path_put(&snappath);
-	snappath.mnt = ufs->__snapmnt;
-	snappath.dentry = roe->__snapdentry;
-	rcu_assign_pointer(ufs->__snapmnt, snapmnt);
-	rcu_assign_pointer(roe->__snapdentry, snaproot);
-	/* wait grace period before dropping old snapshot overlay */
-	synchronize_rcu();
+	snappath.mnt = ufs->snap_mnt;
+	snappath.dentry = NULL;
+	ufs->snap_mnt = snapmnt;
+
+same_snapshot:
+	/*
+	 * remount ro=>* and *=>ro can set effective snapshot now.
+	 * remount rw=>rw will set effective snapshot on next ovl_freeze().
+	 */
+	if ((sb->s_flags & MS_RDONLY) || (*flags & MS_RDONLY))
+		ovl_snapshot_barrier(sb);
 
 out_put_snappath:
 	path_put(&snappath);
@@ -209,6 +214,41 @@ out_free_config:
 	kfree(config.upperdir);
 	kfree(config.workdir);
 	return err;
+}
+
+void ovl_snapshot_barrier(struct super_block *sb)
+{
+	struct ovl_fs *ufs = sb->s_fs_info;
+	struct ovl_entry *roe = sb->s_root->d_fsdata;
+	struct path oldsnappath;
+
+	if (ufs->__snapmnt == ufs->snap_mnt)
+		return;
+
+	/*
+	 * Make the new snapshot requested in remount effective.
+	 * We only update __snapdentry for the snapshot mount root dentry.
+	 * All other dentries may still reference the old snapshot overlay.
+	 * Those will be invalidated either by shrink_dcache_parent() below
+	 * or during RCU lookup by ovl_snapshot_revalidate().
+	 * TODO: handle stale dentries of open files.
+	 */
+	pr_debug("%s: old snap_sid='%s'\n", __func__,
+		 ufs->__snapmnt ? ufs->__snapmnt->mnt_sb->s_id : "");
+	oldsnappath.mnt = ufs->__snapmnt;
+	oldsnappath.dentry = roe->__snapdentry;
+	rcu_assign_pointer(ufs->__snapmnt, mntget(ufs->snap_mnt));
+	rcu_assign_pointer(roe->__snapdentry, ufs->snap_mnt ?
+			   dget(ufs->snap_mnt->mnt_root) : NULL);
+	pr_debug("%s: new snap_sid='%s'\n", __func__,
+		 ufs->__snapmnt ? ufs->__snapmnt->mnt_sb->s_id : "");
+
+	/* wait grace period before dropping old snapshot overlay */
+	synchronize_rcu();
+	/* prune invalid dcache entries - this doesn't deal with open files */
+	shrink_dcache_parent(sb->s_root);
+	/* drop old snapmnt - this may warn about dentries still in use */
+	path_put(&oldsnappath);
 }
 
 static int ovl_snapshot_dentry_is_valid(struct dentry *snapdentry,
