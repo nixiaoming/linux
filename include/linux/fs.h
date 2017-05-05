@@ -2703,6 +2703,20 @@ static inline bool file_start_write_trylock(struct file *file)
 	return __sb_start_write(file_inode(file)->i_sb, SB_FREEZE_WRITE, false);
 }
 
+static inline void file_release_write(struct file *file)
+{
+	if (!S_ISREG(file_inode(file)->i_mode))
+		return;
+	__sb_writers_release(file_inode(file)->i_sb, SB_FREEZE_WRITE);
+}
+
+static inline void file_acquire_write(struct file *file)
+{
+	if (!S_ISREG(file_inode(file)->i_mode))
+		return;
+	__sb_writers_acquired(locks_inode(file)->i_sb, SB_FREEZE_WRITE);
+}
+
 static inline void file_end_write(struct file *file)
 {
 	if (!S_ISREG(file_inode(file)->i_mode))
