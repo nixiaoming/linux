@@ -394,6 +394,8 @@ void ovl_snapshot_barrier(struct super_block *sb);
 struct dentry *ovl_snapshot_dentry(struct dentry *dentry);
 int ovl_snapshot_lookup(struct dentry *parent, struct ovl_lookup_data *d,
 			struct dentry **ret);
+int ovl_snapshot_verify(struct dentry *snapdentry, struct dentry *upperdentry,
+			char *redirect);
 int ovl_snapshot_want_write(struct dentry *dentry);
 void ovl_snapshot_drop_write(struct dentry *dentry);
 
@@ -442,6 +444,13 @@ static inline struct dentry *ovl_snapshot_dentry(struct dentry *dentry)
 static inline int ovl_snapshot_lookup(struct dentry *parent,
 				      struct ovl_lookup_data *d,
 				      struct dentry **ret)
+{
+	return 0;
+}
+
+static inline int ovl_snapshot_verify(struct dentry *snapdentry,
+				      struct dentry *upperdentry,
+				      char *redirect)
 {
 	return 0;
 }
