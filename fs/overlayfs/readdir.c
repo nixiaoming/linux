@@ -326,6 +326,9 @@ static bool ovl_dir_is_real(struct dentry *dir)
 	struct path realpath;
 	enum ovl_path_type type = ovl_path_real(dir, &realpath);
 
+	if (ovl_is_snapshot_fs_type(dir->d_sb))
+		return true;
+
 	if (OVL_TYPE_MERGE(type))
 		return false;
 
