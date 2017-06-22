@@ -83,9 +83,21 @@ invalid:
 	goto err_free;
 }
 
-static int ovl_acceptable(void *ctx, struct dentry *dentry)
+static int ovl_acceptable(void *mnt, struct dentry *dentry)
 {
-	return 1;
+	/*
+	 * A non-dir origin may be disconnected, which is fine, because
+	 * we only need it for its unique inode number.
+	 */
+	if (!d_is_dir(dentry))
+		return 1;
+
+	/* Don't want to follow a deleted empty lower directory */
+	if (d_unhashed(dentry))
+		return 0;
+
+	/* Check if directory belongs to the layer mounted at mnt */
+	return is_subdir(dentry, ((struct vfsmount *)mnt)->mnt_root);
 }
 
 static struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry)
@@ -160,7 +172,7 @@ static struct dentry *ovl_get_origin(struct dentry *dentry,
 	bytes = (fh->len - offsetof(struct ovl_fh, fid));
 	origin = exportfs_decode_fh(mnt, (struct fid *)fh->fid,
 				    bytes >> 2, (int)fh->type,
-				    ovl_acceptable, NULL);
+				    ovl_acceptable, mnt);
 	if (IS_ERR(origin)) {
 		/* Treat stale file handle as "origin unknown" */
 		if (origin == ERR_PTR(-ESTALE))
@@ -695,6 +707,25 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			if (WARN_ON(i == poe->numlower))
 				break;
 		}
+	}
+
+	/*
+	 * If lower not found by name or couldn't verify origin fh, try to
+	 * follow the decoded origin fh in upper to the first lower dir.
+	 */
+	if (!d.stop && poe->numlower && upperdentry && !ctr &&
+	    ovl_verify_dir(dentry->d_sb)) {
+		err = ovl_check_origin(upperdentry, roe->lowerstack,
+				       roe->numlower, &stack, &ctr);
+		if (err)
+			goto out_put;
+		/*
+		 * XXX: We do not continue layers lookup from decoded origin for
+		 * more than a single lower layer. This would require setting
+		 * d.redirect to decoded origin path and jump back to the
+		 * lowerstack layers lookup loop with 'i' set to the root layer
+		 * number where we found the decoded origin.
+		 */
 	}
 
 	/* Lookup index by lower inode and verify it matches upper inode */

@@ -279,7 +279,11 @@ the "trusted.overlay.redirect" extended attribute, will verify that the
 found lower directory file handle and lower filesystem UUID match the
 origin file handle that was stored at copy_up time.  If a found lower
 directory does not match the stored origin, that directory will be not be
-merged with the upper directory.
+merged with the upper directory.  If the stored origin file handle can be
+decoded to an existing lower directory, the decoded directory will be
+merged with the upper directory instead.  The "verify_dir" feature,
+therefore, makes an overlay mount cope better with the situations of
+lower directory rename and delete.
 
 Testsuite
 ---------
