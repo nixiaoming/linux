@@ -762,7 +762,7 @@ int ovl_nlink_start(struct dentry *dentry, bool *locked)
 	const struct cred *old_cred;
 	int err;
 
-	if (!d_inode(dentry))
+	if (!d_inode(dentry) || !ovl_dentry_lower(dentry))
 		return 0;
 
 	/*
