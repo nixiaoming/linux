@@ -73,3 +73,11 @@ config OVERLAY_FS_VERIFY
 	  Note, that verify feature is not backward compatible.  That is,
 	  mounting an overlay with verification index entries on a kernel
 	  that doesn't support this feature will have unexpected results.
+
+config OVERLAY_FS_SNAPSHOT
+	bool "Overlayfs snapshot support (Experimental)"
+	depends on OVERLAY_FS
+
+	help
+	  This enables experimental support for overlayfs snapshot.
+	  If unsure, say N
