@@ -385,6 +385,8 @@ int ovl_snapshot_dir(const char *name, struct path *path,
 		     struct ovl_fs *ofs, struct super_block *sb);
 struct vfsmount *ovl_snapshot_mount(struct path *path, struct ovl_fs *ufs);
 struct dentry *ovl_snapshot_dentry(struct dentry *dentry);
+int ovl_snapshot_want_write(struct dentry *dentry);
+void ovl_snapshot_drop_write(struct dentry *dentry);
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
@@ -397,6 +399,8 @@ static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 
 static inline int ovl_snapshot_fs_register(void) { return 0; }
 static inline void ovl_snapshot_fs_unregister(void) { }
+static inline int ovl_snapshot_want_write(struct dentry *dentry) { return 0; }
+static inline void ovl_snapshot_drop_write(struct dentry *dentry) { }
 static inline int ovl_snapshot_dir(const char *name, struct path *path,
 				   struct ovl_fs *ofs, struct super_block *sb)
 {
