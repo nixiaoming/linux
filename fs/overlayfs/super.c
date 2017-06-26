@@ -39,7 +39,7 @@ module_param_named(index, ovl_index_def, bool, 0644);
 MODULE_PARM_DESC(ovl_index_def,
 		 "Default to on or off for the inodes index feature");
 
-static void ovl_dentry_release(struct dentry *dentry)
+void ovl_dentry_release(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 
@@ -53,7 +53,7 @@ static void ovl_dentry_release(struct dentry *dentry)
 	}
 }
 
-static int ovl_check_append_only(struct inode *inode, int flag)
+int ovl_check_append_only(struct inode *inode, int flag)
 {
 	/*
 	 * This test was moot in vfs may_open() because overlay inode does
@@ -1257,7 +1257,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	if (!ufs->indexdir)
 		ufs->config.consistent_fd = false;
 
-	if (remote)
+	if (ovl_is_snapshot_fs_type(sb))
+		sb->s_d_op = &ovl_snapshot_dentry_operations;
+	else if (remote)
 		sb->s_d_op = &ovl_reval_dentry_operations;
 	else
 		sb->s_d_op = &ovl_dentry_operations;

@@ -10,6 +10,9 @@
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/mount.h>
+#include <linux/namei.h>
+#include <linux/cred.h>
+#include <linux/ratelimit.h>
 #include "overlayfs.h"
 #include "ovl_entry.h"
 
@@ -101,3 +104,99 @@ struct dentry *ovl_snapshot_dentry(struct dentry *dentry)
 
 	return oe->__snapdentry;
 }
+
+static int ovl_snapshot_copy_down(struct dentry *dentry)
+{
+	struct inode *inode = d_inode(dentry);
+	struct dentry *snap = ovl_snapshot_dentry(dentry);
+	int err = -ENOENT;
+
+	if (WARN_ON(d_is_negative(dentry)))
+		goto bug;
+
+	/*
+	 * Snapshot dentry may be positive or negative or NULL.
+	 * If positive, it may need to be copied down.
+	 * If negative, it should be a whiteout.
+	 * Otherwise, the entry is nested inside an already
+	 * whited out directory, so need to do nothing about it.
+	 */
+	if (!snap)
+		return 0;
+
+	if (d_is_negative(snap)) {
+		if (WARN_ON(!ovl_dentry_is_opaque(snap)))
+			goto bug;
+		return 0;
+	}
+
+	if (ovl_dentry_upper(snap))
+		return 0;
+
+	/* Trigger 'copy down' to snapshot */
+	err = ovl_want_write(snap);
+	if (err)
+		goto bug;
+	err = ovl_copy_up(snap);
+	ovl_drop_write(snap);
+	if (err)
+		goto bug;
+
+	return 0;
+bug:
+	pr_warn_ratelimited("overlayfs: failed copy to snapshot (%pd2, ino=%lu, err=%i)\n",
+			    dentry, inode ? inode->i_ino : 0, err);
+	/* Allowing write would corrupt snapshot so deny */
+	return -EROFS;
+}
+
+static struct dentry *ovl_snapshot_d_real(struct dentry *dentry,
+					  const struct inode *inode,
+					  unsigned int open_flags,
+					  unsigned int flags)
+{
+	struct dentry *real;
+	int err;
+
+	if (!d_is_reg(dentry)) {
+		if (!inode || inode == d_inode(dentry))
+			return dentry;
+		goto bug;
+	}
+
+	if (d_is_negative(dentry))
+		return dentry;
+
+	if (open_flags & (O_ACCMODE|O_TRUNC)) {
+		err = ovl_snapshot_copy_down(dentry);
+		if (err)
+			return ERR_PTR(err);
+	}
+
+	/* With snapshot, the real inode is always the upper */
+	real = ovl_dentry_upper(dentry);
+	if (!real)
+		goto bug;
+
+	if (inode && inode != d_inode(real))
+		goto bug;
+
+	if (!inode) {
+		err = ovl_check_append_only(d_inode(real), open_flags);
+		if (err)
+			return ERR_PTR(err);
+	}
+
+	return real;
+
+bug:
+	WARN(1, "%s(%pd4, %s:%lu): real dentry not found\n", __func__,
+	     dentry, inode ? inode->i_sb->s_id : "NULL",
+	     inode ? inode->i_ino : 0);
+	return dentry;
+}
+
+const struct dentry_operations ovl_snapshot_dentry_operations = {
+	.d_release = ovl_dentry_release,
+	.d_real = ovl_snapshot_d_real,
+};

@@ -367,6 +367,8 @@ struct ovl_fh *ovl_encode_fh(struct dentry *dentry, bool is_upper,
 extern const struct export_operations ovl_export_operations;
 
 /* super.c */
+void ovl_dentry_release(struct dentry *dentry);
+int ovl_check_append_only(struct inode *inode, int flag);
 struct ovl_fs;
 int ovl_lower_dir(const char *name, struct path *path,
 		  struct ovl_fs *ofs, int *stack_depth, bool *remote);
@@ -376,6 +378,7 @@ struct dentry *ovl_mount(struct file_system_type *fs_type, int flags,
 #ifdef CONFIG_OVERLAY_FS_SNAPSHOT
 /* snapshot.c */
 extern struct file_system_type ovl_snapshot_fs_type;
+extern const struct dentry_operations ovl_snapshot_dentry_operations;
 int ovl_snapshot_fs_register(void);
 void ovl_snapshot_fs_unregister(void);
 int ovl_snapshot_dir(const char *name, struct path *path,
@@ -389,6 +392,9 @@ static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 }
 
 #else
+/* Silence symbol undeclared compile error in super.c */
+#define ovl_snapshot_dentry_operations ovl_dentry_operations
+
 static inline int ovl_snapshot_fs_register(void) { return 0; }
 static inline void ovl_snapshot_fs_unregister(void) { }
 static inline int ovl_snapshot_dir(const char *name, struct path *path,
