@@ -56,3 +56,11 @@ config OVERLAY_FS_INDEX_INCOMPAT
 	  cleaning the content of 'workdir' or by providing an alternative
 	  'workdir' path.  In that case, mounting the same overlay again with
 	  inodes index enabled will have unexpected results.
+
+config OVERLAY_FS_SNAPSHOT
+	bool "Overlayfs snapshot support (Experimental)"
+	depends on OVERLAY_FS
+
+	help
+	  This enables experimental support for overlayfs snapshot.
+	  If unsure, say N
