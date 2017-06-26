@@ -43,3 +43,11 @@ config OVERLAY_FS_INDEX
 	  outcomes.  However, mounting the same overlay with an old kernel
 	  read-write and then mounting it again with a new kernel, will have
 	  unexpected results.
+
+config OVERLAY_FS_SNAPSHOT
+	bool "Overlayfs snapshot support (Experimental)"
+	depends on OVERLAY_FS
+
+	help
+	  This enables experimental support for overlayfs snapshot.
+	  If unsure, say N

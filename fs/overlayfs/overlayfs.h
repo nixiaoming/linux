@@ -9,6 +9,7 @@
 
 #include <linux/kernel.h>
 #include <linux/uuid.h>
+#include <linux/xattr.h>
 
 enum ovl_path_type {
 	__OVL_PATH_UPPER	= (1 << 0),
@@ -363,3 +364,26 @@ struct ovl_fh *ovl_encode_fh(struct dentry *dentry, bool is_upper,
 
 /* export.c */
 extern const struct export_operations ovl_export_operations;
+
+/* super.c */
+struct dentry *ovl_mount(struct file_system_type *fs_type, int flags,
+			 const char *dev_name, void *raw_data);
+
+#ifdef CONFIG_OVERLAY_FS_SNAPSHOT
+/* snapshot.c */
+extern struct file_system_type ovl_snapshot_fs_type;
+int ovl_snapshot_fs_register(void);
+void ovl_snapshot_fs_unregister(void);
+static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
+{
+	return sb->s_type == &ovl_snapshot_fs_type;
+}
+
+#else
+static inline int ovl_snapshot_fs_register(void) { return 0; }
+static inline void ovl_snapshot_fs_unregister(void) { }
+static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
+{
+	return false;
+}
+#endif
