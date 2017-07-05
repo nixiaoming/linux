@@ -294,8 +294,8 @@ out_err:
 	return err;
 }
 
-static int ovl_lookup_layer(struct dentry *base, struct ovl_lookup_data *d,
-			    struct dentry **ret)
+int ovl_lookup_layer(struct dentry *base, struct ovl_lookup_data *d,
+		     struct dentry **ret)
 {
 	/* Counting down from the end, since the prefix can change */
 	size_t rem = d->name.len - 1;
@@ -746,11 +746,12 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	struct ovl_entry *oe;
 	const struct cred *old_cred;
 	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
-	struct ovl_entry *poe = dentry->d_parent->d_fsdata;
+	struct dentry *parent = dentry->d_parent;
+	struct ovl_entry *poe = parent->d_fsdata;
 	struct ovl_entry *roe = dentry->d_sb->s_root->d_fsdata;
 	struct path *stack = NULL;
 	struct dentry *upperdir, *upperdentry = NULL;
-	struct dentry *snapdir, *snapdentry = NULL;
+	struct dentry *snapdentry = NULL;
 	struct dentry *origin = NULL;
 	struct dentry *index = NULL;
 	unsigned int ctr = 0;
@@ -810,25 +811,20 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			upperredirect = kstrdup(d.redirect, GFP_KERNEL);
 			if (!upperredirect)
 				goto out_put_upper;
-			if (d.redirect[0] == '/')
+			if (d.redirect[0] == '/') {
+				parent = dentry->d_sb->s_root;
 				poe = roe;
+			}
 		}
 		upperopaque = d.opaque;
 	}
 
-	snapdir = poe->__snapdentry;
-	if (is_snapshot_fs && snapdir && d_can_lookup(snapdir)) {
-		/*
-		 * Snapshot lookup may return negative for explicit
-		 * whiteout and positive non-dir even if upper was dir,
-		 * so we know we don't need to CoW.
-		 */
+	if (is_snapshot_fs) {
 		d.is_snapshot = true;
-		err = ovl_lookup_layer(snapdir, &d, &this);
+		err = ovl_snapshot_lookup(parent, &d, &snapdentry);
 		if (err)
 			goto out_put_upper;
 
-		snapdentry = this;
 		d.stop = true;
 	}
 
