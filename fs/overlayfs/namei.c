@@ -24,6 +24,7 @@ struct ovl_lookup_data {
 	bool stop;
 	bool last;
 	char *redirect;
+	bool is_snapshot;
 };
 
 char *ovl_get_redirect_xattr(struct dentry *dentry, size_t *len)
@@ -239,14 +240,28 @@ static int ovl_lookup_single(struct dentry *base, struct ovl_lookup_data *d,
 			goto out;
 		goto out_err;
 	}
-	if (!this->d_inode)
+	if (!this->d_inode) {
+		/* We need the snapshot overlay negative dentry */
+		if (d->is_snapshot)
+			goto out;
 		goto put_and_out;
+	}
 
 	if (ovl_dentry_weird(this)) {
 		/* Don't support traversing automounts and other weirdness */
 		err = -EREMOTE;
 		goto out_err;
 	}
+
+	/*
+	 * When looking up in the overlay snapshot mount, all we need to know
+	 * about the snapdentry is if it is positive and if it is upper, so
+	 * we know if we need to CoW. If the snapentry is positive, we don't
+	 * care if it is dir/non-dir and whether it is opaque/redirect.
+	 */
+	if (d->is_snapshot)
+		goto out;
+
 	if (ovl_is_whiteout(this)) {
 		d->stop = d->opaque = true;
 		goto put_and_out;
@@ -308,13 +323,21 @@ static int ovl_lookup_layer(struct dentry *base, struct ovl_lookup_data *d,
 			return err;
 		dentry = base;
 		if (end)
-			break;
+			goto out;
 
 		rem -= thislen + 1;
 
 		if (WARN_ON(rem >= d->name.len))
 			return -EIO;
 	}
+
+	if (d->is_snapshot) {
+		/* An ancestor of snapshot entry was negative or non-dir */
+		dput(dentry);
+		dentry = NULL;
+	}
+
+out:
 	*ret = dentry;
 	return 0;
 }
@@ -727,6 +750,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	struct ovl_entry *roe = dentry->d_sb->s_root->d_fsdata;
 	struct path *stack = NULL;
 	struct dentry *upperdir, *upperdentry = NULL;
+	struct dentry *snapdir, *snapdentry = NULL;
 	struct dentry *origin = NULL;
 	struct dentry *index = NULL;
 	unsigned int ctr = 0;
@@ -736,6 +760,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	struct dentry *this;
 	unsigned int i;
 	int err;
+	bool is_snapshot_fs = ovl_is_snapshot_fs_type(dentry->d_sb);
 	struct ovl_lookup_data d = {
 		.name = dentry->d_name,
 		.is_dir = false,
@@ -743,6 +768,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		.stop = false,
 		.last = !poe->numlower,
 		.redirect = NULL,
+		.is_snapshot = false,
 	};
 
 	if (dentry->d_name.len > ofs->namelen)
@@ -760,7 +786,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			err = -EREMOTE;
 			goto out;
 		}
-		if (upperdentry && !d.is_dir) {
+		if (upperdentry && !d.is_dir && !is_snapshot_fs) {
 			BUG_ON(!d.stop || d.redirect);
 			/*
 			 * Lookup copy up origin by decoding origin file handle.
@@ -788,6 +814,22 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 				poe = roe;
 		}
 		upperopaque = d.opaque;
+	}
+
+	snapdir = poe->__snapdentry;
+	if (is_snapshot_fs && snapdir && d_can_lookup(snapdir)) {
+		/*
+		 * Snapshot lookup may return negative for explicit
+		 * whiteout and positive non-dir even if upper was dir,
+		 * so we know we don't need to CoW.
+		 */
+		d.is_snapshot = true;
+		err = ovl_lookup_layer(snapdir, &d, &this);
+		if (err)
+			goto out_put_upper;
+
+		snapdentry = this;
+		d.stop = true;
 	}
 
 	if (!d.stop && poe->numlower) {
@@ -895,6 +937,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		goto out_put;
 
 	oe->opaque = upperopaque;
+	oe->__snapdentry = snapdentry;
 	memcpy(oe->lowerstack, stack, sizeof(struct path) * ctr);
 	dentry->d_fsdata = oe;
 
@@ -930,6 +973,7 @@ out_put:
 	kfree(stack);
 out_put_upper:
 	dput(upperdentry);
+	dput(snapdentry);
 	kfree(upperredirect);
 out:
 	kfree(d.redirect);
