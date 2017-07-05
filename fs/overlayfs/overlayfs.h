@@ -47,6 +47,10 @@ enum ovl_entry_flag {
 	OVL_E_UPPER_ALIAS,
 	OVL_E_OPAQUE,
 	OVL_E_CONNECTED,
+	/* No need to copy object to snapshot */
+	OVL_E_NOCOW,
+	/* No need to copy children to snapshot */
+	OVL_E_CHILDREN_NOCOW,
 };
 
 /*
@@ -204,6 +208,16 @@ static inline bool ovl_open_flags_need_copy_up(int flags)
 		return false;
 
 	return ((OPEN_FMODE(flags) & FMODE_WRITE) || (flags & O_TRUNC));
+}
+
+static inline int ovl_inode_lock(struct inode *inode)
+{
+	return mutex_lock_interruptible(&OVL_I(inode)->lock);
+}
+
+static inline void ovl_inode_unlock(struct inode *inode)
+{
+	mutex_unlock(&OVL_I(inode)->lock);
 }
 
 /* util.c */
@@ -411,6 +425,17 @@ int ovl_cleanup(struct inode *dir, struct dentry *dentry);
 struct dentry *ovl_create_temp(struct dentry *workdir, struct ovl_cattr *attr);
 char *ovl_get_redirect(struct dentry *dentry, bool abs_redirect, bool nofollow,
 		       struct dentry *root);
+int ovl_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+	       bool excl);
+int ovl_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode);
+int ovl_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
+	      dev_t rdev);
+int ovl_symlink(struct inode *dir, struct dentry *dentry, const char *link);
+int ovl_link(struct dentry *old, struct inode *newdir, struct dentry *new);
+int ovl_unlink(struct inode *dir, struct dentry *dentry);
+int ovl_rmdir(struct inode *dir, struct dentry *dentry);
+int ovl_rename(struct inode *olddir, struct dentry *old, struct inode *newdir,
+	       struct dentry *new, unsigned int flags);
 
 /* file.c */
 extern const struct file_operations ovl_file_operations;
@@ -429,6 +454,10 @@ int ovl_set_origin(struct dentry *dentry, struct dentry *lower,
 
 /* export.c */
 extern const struct export_operations ovl_export_operations;
+
+struct dentry *ovl_lookup_real(struct super_block *sb, struct dentry *real,
+			       struct ovl_layer *layer);
+
 
 /* super.c */
 extern const struct xattr_handler *ovl_xattr_handlers[];
@@ -455,6 +484,8 @@ int ovl_get_upper(struct ovl_fs *ofs, struct path *upperpath);
 #ifdef CONFIG_OVERLAY_FS_SNAPSHOT
 /* snapshot.c */
 extern struct file_system_type ovl_snapshot_fs_type;
+extern const struct inode_operations ovl_snapshot_inode_operations;
+
 int ovl_snapshot_fs_register(void);
 void ovl_snapshot_fs_unregister(void);
 
