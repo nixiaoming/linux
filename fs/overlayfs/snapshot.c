@@ -48,6 +48,7 @@ void ovl_snapshot_fs_unregister(void)
 int ovl_snapshot_dir(const char *name, struct path *path,
 		     struct ovl_fs *ofs, struct super_block *sb)
 {
+	int stack_depth = 0;
 	int err = -ENOMEM;
 	bool remote = false;
 	char *tmp;
@@ -57,21 +58,40 @@ int ovl_snapshot_dir(const char *name, struct path *path,
 		goto out;
 
 	ovl_unescape(tmp);
-	err = ovl_lower_dir(tmp, path, ofs, &sb->s_stack_depth, &remote);
+	err = ovl_lower_dir(tmp, path, ofs, &stack_depth, &remote);
 	if (err)
 		goto out;
 
+	/*
+	 * We already reserved stack depth for the underlying snapshot overlay
+	 * in start of ovl_fill_super(). This ensures that the underlying
+	 * snapshot overlay stack depth does not exceed this reservation.
+	 * ovl_snapshot_dir() is called from ovl_snapshot_remount()
+	 * to replace the underlying snapshot overlay, so that also guaranties
+	 * that replacing the snapshot overlay obays to stack depth limits.
+	 */
+	err = -EINVAL;
+	if (stack_depth > FILESYSTEM_MAX_STACK_DEPTH - 1) {
+		pr_err("overlayfs: snapshot overlay stacking depth exceeded\n");
+		goto err_out;
+	}
+
 	/* path has to be the root of an overlayfs mount */
+	err = -EINVAL;
 	if (!remote || path->dentry != path->mnt->mnt_root ||
 	    path->mnt->mnt_sb->s_magic != OVERLAYFS_SUPER_MAGIC) {
 		pr_err("overlayfs: '%s' is not an overlayfs mount\n", tmp);
-		path_put(path);
-		err = -EINVAL;
+		goto err_out;
 	}
 
+	err = 0;
 out:
 	kfree(tmp);
 	return err;
+
+err_out:
+	path_put(path);
+	goto out;
 }
 
 struct vfsmount *ovl_snapshot_mount(struct path *path, struct ovl_fs *ufs)

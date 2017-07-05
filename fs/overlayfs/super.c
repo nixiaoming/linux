@@ -941,6 +941,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_free_config;
 	}
 
+	sb->s_stack_depth = 0;
+	sb->s_maxbytes = MAX_LFS_FILESIZE;
+
 	if (ovl_is_snapshot_fs_type(sb)) {
 		if (!ufs->config.upperdir) {
 			if (!silent)
@@ -953,11 +956,17 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 				pr_err("overlayfs: fs type 'snapshot' requires no 'lowerdir'\n");
 			goto out_free_config;
 		}
-		ufs->config.index = false;
-	}
 
-	sb->s_stack_depth = 0;
-	sb->s_maxbytes = MAX_LFS_FILESIZE;
+		ufs->config.index = false;
+
+		/*
+		 * snapshot mount may be remounted later with underlying
+		 * snapshot overlay. we must leave room in stack below us
+		 * for that overlay, even if snapshot= mount option is not
+		 * provided on the initial mount.
+		 */
+		sb->s_stack_depth = FILESYSTEM_MAX_STACK_DEPTH - 1;
+	}
 
 	if (ufs->config.upperdir) {
 		if (!ovl_is_snapshot_fs_type(sb) && !ufs->config.workdir) {
@@ -990,7 +999,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			pr_warn("overlayfs: upperdir is in-use by another mount, accessing files from both mounts will result in undefined behavior.\n");
 		}
 
-		sb->s_stack_depth = upperpath.mnt->mnt_sb->s_stack_depth;
+		sb->s_stack_depth = max(sb->s_stack_depth,
+					upperpath.mnt->mnt_sb->s_stack_depth);
 	}
 
 	if (ufs->config.snapshot) {
