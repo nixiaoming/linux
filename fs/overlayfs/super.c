@@ -1168,14 +1168,14 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_export_op = &ovl_export_operations;
 
 	/*
-	 * Copy on read for consistent fd depends on underlying fs clone
-	 * support and on index dir, which depends on !ovl_force_readonly.
+	 * Copy on read for consistent fd depends on index dir, which depends
+	 * on !ovl_force_readonly.
 	 * On ro mount, fd is always consistent, but if overlay can be
 	 * later remounted rw, we need to copy on read anyway, so that
 	 * ro fd that was opened during ro mount will be consistent with
 	 * rw fd that is opened after remount rw.
 	 */
-	if (!ufs->cloneup || !ufs->indexdir)
+	if (!ufs->indexdir)
 		ufs->config.consistent_fd = false;
 
 	if (remote)
