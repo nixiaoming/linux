@@ -19,6 +19,19 @@
 #include "overlayfs.h"
 #include "ovl_entry.h"
 
+void ovl_unescape(char *s)
+{
+	char *d = s;
+
+	for (;; s++, d++) {
+		if (*s == '\\')
+			s++;
+		*d = *s;
+		if (!*s)
+			break;
+	}
+}
+
 int ovl_want_write(struct dentry *dentry)
 {
 	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
