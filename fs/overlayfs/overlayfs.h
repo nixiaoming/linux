@@ -267,6 +267,9 @@ struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt);
 int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
 			struct ovl_layer *layers, unsigned int numlayers,
 			struct ovl_path **stackp);
+struct ovl_lookup_data;
+int ovl_lookup_layer(struct dentry *base, struct ovl_lookup_data *d,
+		     struct dentry **ret);
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		      bool is_upper, bool set);
 struct dentry *ovl_index_upper(struct ovl_fs *ofs, struct dentry *index);
@@ -377,6 +380,8 @@ int ovl_get_upper(struct ovl_fs *ofs, struct path *upperpath);
 extern struct file_system_type ovl_snapshot_fs_type;
 int ovl_snapshot_fs_register(void);
 void ovl_snapshot_fs_unregister(void);
+int ovl_snapshot_lookup(struct dentry *parent, struct ovl_lookup_data *d,
+			struct dentry **ret);
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
@@ -390,5 +395,12 @@ static inline void ovl_snapshot_fs_unregister(void) { }
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
 	return false;
+}
+
+static inline int ovl_snapshot_lookup(struct dentry *parent,
+				      struct ovl_lookup_data *d,
+				      struct dentry **ret)
+{
+	return 0;
 }
 #endif
