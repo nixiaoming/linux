@@ -524,7 +524,9 @@ unsigned int ovl_get_nlink(struct dentry *lowerdentry,
 	char buf[13];
 	int err;
 
-	if (!lowerdentry || !upperdentry || d_inode(lowerdentry)->i_nlink == 1)
+	if (!lowerdentry || !upperdentry ||
+	    d_inode(lowerdentry)->i_nlink == 1 ||
+	    S_ISDIR(d_inode(upperdentry)->i_mode))
 		return fallback;
 
 	err = vfs_getxattr(upperdentry, OVL_XATTR_NLINK, &buf, sizeof(buf) - 1);
@@ -618,8 +620,10 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
 	 * not use lower as hash key in that case.
 	 * Hash inodes that are or could be indexed by origin inode and
 	 * non-indexed upper inodes that could be hard linked by upper inode.
+	 * Hash all inodes for NFS export.
 	 */
-	if (!S_ISDIR(realinode->i_mode) && (upperdentry || indexed)) {
+	if (dentry->d_sb->s_export_op ||
+	    (!S_ISDIR(realinode->i_mode) && (upperdentry || indexed))) {
 		struct inode *key = d_inode(indexed ? lowerdentry :
 						      upperdentry);
 		unsigned int nlink;

@@ -276,7 +276,9 @@ void ovl_inode_update(struct inode *inode, struct dentry *upperdentry)
 	 */
 	smp_wmb();
 	OVL_I(inode)->__upperdentry = upperdentry;
-	if (!S_ISDIR(upperinode->i_mode) && inode_unhashed(inode)) {
+	/* Hash all inodes for NFS export and non-dir for hardlink support */
+	if ((!S_ISDIR(upperinode->i_mode) || inode->i_sb->s_export_op) &&
+	    inode_unhashed(inode)) {
 		inode->i_private = upperinode;
 		__insert_inode_hash(inode, (unsigned long) upperinode);
 	}
