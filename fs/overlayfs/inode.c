@@ -553,7 +553,9 @@ unsigned int ovl_get_nlink(struct dentry *lowerdentry,
 	char buf[13];
 	int err;
 
-	if (!lowerdentry || !upperdentry || d_inode(lowerdentry)->i_nlink == 1)
+	if (!lowerdentry || !upperdentry ||
+	    d_inode(lowerdentry)->i_nlink == 1 ||
+	    S_ISDIR(d_inode(upperdentry)->i_mode))
 		return fallback;
 
 	err = vfs_getxattr(upperdentry, OVL_XATTR_NLINK, &buf, sizeof(buf) - 1);
@@ -647,6 +649,7 @@ struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
 	struct inode *inode;
 	/* Already indexed or could be indexed on copy up? */
 	bool indexed = (index || (ovl_indexdir(sb) && !upperdentry));
+	struct dentry *origin = indexed ? lowerdentry : upperdentry;
 
 	if (WARN_ON(upperdentry && indexed && !lowerdentry))
 		return ERR_PTR(-EIO);
@@ -659,10 +662,10 @@ struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
 	 * not use lower as hash key in that case.
 	 * Hash inodes that are or could be indexed by origin inode and
 	 * non-indexed upper inodes that could be hard linked by upper inode.
+	 * Hash directory inodes only if NFS export is supported.
 	 */
-	if (!S_ISDIR(realinode->i_mode) && (upperdentry || indexed)) {
-		struct inode *key = d_inode(indexed ? lowerdentry :
-						      upperdentry);
+	if (origin && (!S_ISDIR(realinode->i_mode) || sb->s_export_op)) {
+		struct inode *key = d_inode(origin);
 		unsigned int nlink;
 
 		inode = iget5_locked(sb, (unsigned long) key,
