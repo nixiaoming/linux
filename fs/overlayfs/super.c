@@ -1332,6 +1332,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Root is always merge -> can have whiteouts */
 	ovl_set_flag(OVL_WHITEOUTS, d_inode(root_dentry));
+	/* Hash root directory inode by upper dir inode for NFS export */
+	if (sb->s_export_op)
+		ovl_inode_update(d_inode(root_dentry), upperpath.dentry);
 	ovl_inode_init(d_inode(root_dentry), upperpath.dentry,
 		       ovl_dentry_lower(root_dentry));
 
