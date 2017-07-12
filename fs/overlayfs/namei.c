@@ -89,16 +89,18 @@ static int ovl_acceptable(void *ctx, struct dentry *dentry)
 
 	/*
 	 * A non-dir origin may be disconnected, which is fine, because
-	 * we only need it for its unique inode number.
+	 * we only need it for its unique inode number. However, if layer->idx
+	 * is 0, we need an upper dentry that is connected to upper layer root,
+	 * so we can lookup overlay path from real upper path for NFS export.
 	 */
-	if (layer->idx || !d_is_dir(dentry))
+	if (layer->idx && !d_is_dir(dentry))
 		return 1;
 
 	/* Don't decode a deleted empty directory */
-	if (d_unhashed(dentry))
+	if (d_is_dir(dentry) && d_unhashed(dentry))
 		return 0;
 
-	/* Check if directory belongs to the layer we are decoding from */
+	/* Check if dentry belongs to the layer we are decoding from */
 	return is_subdir(dentry, layer->mnt->mnt_root);
 }
 

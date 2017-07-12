@@ -173,19 +173,39 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 }
 
 static struct dentry *ovl_upper_fh_to_d(struct super_block *sb,
-					struct ovl_fh *fh)
+					struct ovl_fh *fh, bool to_parent)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
 	struct ovl_layer layer = { .mnt = ofs->upper_mnt };
 	struct dentry *dentry;
-	struct dentry *upper;
+	struct dentry *tmp, *upper;
 
 	if (!ofs->upper_mnt)
 		return ERR_PTR(-EACCES);
 
+	if (!(fh->flags & OVL_FH_FLAG_WITH_PARENT)) {
+		/* Cannot connect a non-connectable file handle */
+		if (to_parent)
+			return ERR_PTR(-ENOENT);
+
+		/* tell ovl_decode_fh() we accept disconnected */
+		layer.idx = -1;
+	}
+
 	upper = ovl_decode_fh(fh, &layer);
 	if (IS_ERR_OR_NULL(upper))
 		return upper;
+
+	if (to_parent) {
+		if (IS_ROOT(upper)) {
+			dput(upper);
+			return ERR_PTR(-ECHILD);
+		}
+
+		tmp = upper;
+		upper = dget_parent(upper);
+		dput(tmp);
+	}
 
 	dentry = ovl_obtain_alias(sb, upper, NULL);
 	dput(upper);
@@ -193,8 +213,8 @@ static struct dentry *ovl_upper_fh_to_d(struct super_block *sb,
 	return dentry;
 }
 
-static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
-				       int fh_len, int fh_type)
+static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
+				  int fh_len, int fh_type, bool to_parent)
 {
 	struct dentry *dentry = NULL;
 	struct ovl_fh *fh = (struct ovl_fh *) fid;
@@ -213,7 +233,7 @@ static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 	/* TODO: decode non-upper */
 	flags = fh->flags;
 	if (flags & OVL_FH_FLAG_PATH_UPPER)
-		dentry = ovl_upper_fh_to_d(sb, fh);
+		dentry = ovl_upper_fh_to_d(sb, fh, to_parent);
 	err = PTR_ERR(dentry);
 	if (IS_ERR(dentry) && err != -ESTALE)
 		goto out_err;
@@ -226,7 +246,42 @@ out_err:
 	return ERR_PTR(err);
 }
 
+static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
+				       int fh_len, int fh_type)
+{
+	return ovl_fh_to_d(sb, fid, fh_len, fh_type, false);
+}
+
+static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
+				       int fh_len, int fh_type)
+{
+	return ovl_fh_to_d(sb, fid, fh_len, fh_type, true);
+}
+
+static int ovl_get_name(struct dentry *parent, char *name,
+			struct dentry *child)
+{
+	struct dentry *upper = ovl_dentry_upper(child);
+
+	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
+		goto fail;
+
+	spin_lock(&upper->d_lock);
+	memcpy(name, upper->d_name.name, upper->d_name.len);
+	name[upper->d_name.len] = '\0';
+	spin_unlock(&upper->d_lock);
+
+	return 0;
+
+fail:
+	pr_warn_ratelimited("overlayfs: failed to get name (%pd2, ino=%lu, upper=%pd2)\n",
+			    parent, d_inode(child)->i_ino, upper);
+	return -EIO;
+}
+
 const struct export_operations ovl_export_operations = {
 	.encode_fh      = ovl_encode_inode_fh,
 	.fh_to_dentry	= ovl_fh_to_dentry,
+	.fh_to_parent	= ovl_fh_to_parent,
+	.get_name	= ovl_get_name,
 };
