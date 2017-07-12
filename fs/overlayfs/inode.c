@@ -602,14 +602,13 @@ static bool ovl_verify_inode(struct inode *inode, struct dentry *lowerdentry,
 	return true;
 }
 
-struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
-			    struct dentry *index)
+struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
+			    struct dentry *lowerdentry, struct dentry *index)
 {
-	struct dentry *lowerdentry = ovl_dentry_lower(dentry);
 	struct inode *realinode = upperdentry ? d_inode(upperdentry) : NULL;
 	struct inode *inode;
 	/* Already indexed or could be indexed on copy up? */
-	bool indexed = (index || (ovl_indexdir(dentry->d_sb) && !upperdentry));
+	bool indexed = (index || (ovl_indexdir(sb) && !upperdentry));
 
 	if (WARN_ON(upperdentry && indexed && !lowerdentry))
 		return ERR_PTR(-EIO);
@@ -624,13 +623,13 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
 	 * non-indexed upper inodes that could be hard linked by upper inode.
 	 * Hash all inodes for NFS export.
 	 */
-	if (dentry->d_sb->s_export_op ||
+	if (sb->s_export_op ||
 	    (!S_ISDIR(realinode->i_mode) && (upperdentry || indexed))) {
 		struct inode *key = d_inode(indexed ? lowerdentry :
 						      upperdentry);
 		unsigned int nlink;
 
-		inode = iget5_locked(dentry->d_sb, (unsigned long) key,
+		inode = iget5_locked(sb, (unsigned long) key,
 				     ovl_inode_test, ovl_inode_set, key);
 		if (!inode)
 			goto out_nomem;
@@ -653,7 +652,7 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
 				      realinode->i_nlink);
 		set_nlink(inode, nlink);
 	} else {
-		inode = new_inode(dentry->d_sb);
+		inode = new_inode(sb);
 		if (!inode)
 			goto out_nomem;
 	}
