@@ -62,6 +62,9 @@ enum ovl_flag {
 #error Endianness not defined
 #endif
 
+/* The type returned by overlay exportfs ops when encoding an ovl_fh handle */
+#define OVL_FILEID	0xfb
+
 /* On-disk and in-memeory format for redirect by file handle */
 struct ovl_fh {
 	u8 version;	/* 0 */
@@ -327,3 +330,6 @@ int ovl_copy_up_flags(struct dentry *dentry, int flags);
 int ovl_copy_xattr(struct dentry *old, struct dentry *new);
 int ovl_set_attr(struct dentry *upper, struct kstat *stat);
 struct ovl_fh *ovl_encode_fh(struct dentry *lower, bool is_upper);
+
+/* export.c */
+extern const struct export_operations ovl_export_operations;
