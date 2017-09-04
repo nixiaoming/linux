@@ -94,17 +94,19 @@ static inline void fsnotify_link_count(struct inode *inode)
 /*
  * fsnotify_move - file old_name at old_dir was moved to new_name at new_dir
  */
-static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
+static inline void fsnotify_move(struct dentry *old_dir,
+				 struct dentry *new_dir,
 				 const unsigned char *old_name,
-				 int isdir, struct inode *target, struct dentry *moved)
+				 int isdir, struct inode *target,
+				 struct dentry *moved)
 {
-	struct inode *source = moved->d_inode;
+	struct inode *source = d_inode(moved);
 	u32 fs_cookie = fsnotify_get_cookie();
 	__u32 old_dir_mask = FS_MOVED_FROM;
 	__u32 new_dir_mask = FS_MOVED_TO;
 	const unsigned char *new_name = moved->d_name.name;
 
-	if (old_dir == new_dir)
+	if (d_inode(old_dir) == d_inode(new_dir))
 		old_dir_mask |= FS_DN_RENAME;
 
 	if (isdir) {
@@ -112,15 +114,15 @@ static inline void fsnotify_move(struct inode *old_dir, struct inode *new_dir,
 		new_dir_mask |= FS_ISDIR;
 	}
 
-	fsnotify(old_dir, old_dir_mask, source, FSNOTIFY_EVENT_INODE, old_name,
-		 fs_cookie);
-	fsnotify_filename(moved->d_parent, new_dir_mask, new_name, fs_cookie);
+	fsnotify_filename(old_dir, old_dir_mask, old_name, fs_cookie);
+	fsnotify_filename(new_dir, new_dir_mask, new_name, fs_cookie);
 
 	if (target)
 		fsnotify_link_count(target);
 
 	if (source)
-		fsnotify(source, FS_MOVE_SELF, moved, FSNOTIFY_EVENT_DENTRY, NULL, 0);
+		fsnotify(source, FS_MOVE_SELF, moved, FSNOTIFY_EVENT_DENTRY,
+			 NULL, 0);
 	audit_dentry_child(moved, AUDIT_TYPE_CHILD_CREATE);
 }
 

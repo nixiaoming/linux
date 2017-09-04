@@ -4342,6 +4342,8 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 {
 	int error;
 	bool is_dir = d_is_dir(old_dentry);
+	struct dentry *old_parent = old_dentry->d_parent;
+	struct dentry *new_parent = new_dentry->d_parent;
 	struct inode *source = old_dentry->d_inode;
 	struct inode *target = new_dentry->d_inode;
 	bool new_is_dir = false;
@@ -4452,10 +4454,11 @@ out:
 		inode_unlock(target);
 	dput(new_dentry);
 	if (!error) {
-		fsnotify_move(old_dir, new_dir, old_name.name, is_dir,
+		fsnotify_move(old_parent, new_parent, old_name.name, is_dir,
 			      !(flags & RENAME_EXCHANGE) ? target : NULL, old_dentry);
 		if (flags & RENAME_EXCHANGE) {
-			fsnotify_move(new_dir, old_dir, old_dentry->d_name.name,
+			fsnotify_move(new_parent, old_parent,
+				      old_dentry->d_name.name,
 				      new_is_dir, NULL, new_dentry);
 		}
 	}
