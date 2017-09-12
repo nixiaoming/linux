@@ -20,6 +20,12 @@ static bool should_merge(struct fsnotify_event *old_fsn,
 	old = FANOTIFY_E(old_fsn);
 	new = FANOTIFY_E(new_fsn);
 
+	/*
+	 * Don't merge with a filename event
+	 */
+	if (old_fsn->mask & FAN_FILENAME_EVENTS)
+		return 0;
+
 	if (old_fsn->inode == new_fsn->inode && old->tgid == new->tgid &&
 	    old->path.mnt == new->path.mnt &&
 	    old->path.dentry == new->path.dentry)
