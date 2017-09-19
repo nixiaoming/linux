@@ -1009,7 +1009,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 					      "0", 1, 0);
 			if (err) {
 				ufs->noxattr = true;
-				pr_warn("overlayfs: upper fs does not support xattr.\n");
+				ufs->config.redirect_dir = false;
+				ufs->config.index = false;
+				pr_warn("overlayfs: upper fs does not support xattr, falling back to redirect_dir=off, index=off and no opaque dir.\n");
 			} else {
 				vfs_removexattr(ufs->workdir, OVL_XATTR_OPAQUE);
 			}
