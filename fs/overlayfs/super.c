@@ -434,12 +434,20 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 		}
 	}
 
-	/* Workdir is useless in non-upper mount */
-	if (!config->upperdir && config->workdir) {
-		pr_info("overlayfs: option \"workdir=%s\" is useless in a non-upper mount, ignore\n",
-			config->workdir);
-		kfree(config->workdir);
-		config->workdir = NULL;
+	if (!config->upperdir) {
+		/* Workdir is useless in non-upper mount */
+		if (config->workdir) {
+			pr_info("overlayfs: option \"workdir=%s\" is useless in a non-upper mount, ignore\n",
+				config->workdir);
+			kfree(config->workdir);
+			config->workdir = NULL;
+		}
+		if (config->redirect_dir != ovl_redirect_dir_def ||
+		    config->index != ovl_index_def) {
+			pr_info("overlayfs: options \"redirect_dir\" and \"index\" are useless in a non-upper mount, ignore\n");
+			config->redirect_dir = ovl_redirect_dir_def;
+			config->index = ovl_index_def;
+		}
 	}
 
 	return 0;
@@ -641,10 +649,12 @@ static int ovl_lower_dir(const char *name, struct path *path,
 		*remote = true;
 
 	/*
-	 * The inodes index feature needs to encode and decode file
-	 * handles, so it requires that all layers support them.
+	 * The inodes index feature needs to encode and decode lower file
+	 * handles stored in upper inodes, so it requires that all lower
+	 * layers support file handles.
 	 */
-	if (ofs->config.index && !ovl_can_decode_fh(path->dentry->d_sb)) {
+	if (ofs->config.upperdir && !ovl_can_decode_fh(path->dentry->d_sb) &&
+	    ofs->config.index) {
 		ofs->config.index = false;
 		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off.\n", name);
 	}
