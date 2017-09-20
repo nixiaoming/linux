@@ -16,6 +16,7 @@ struct ovl_config {
 	bool redirect_dir;
 	bool verify_dir;
 	int index;
+	bool consistent_fd;
 };
 
 /* private information held for overlayfs's superblock */
@@ -37,6 +38,7 @@ struct ovl_fs {
 	bool tmpfile;
 	bool noxattr;
 	bool cloneup;
+	bool rocopyup;	/* copy up on open for read */
 	/* sb common to all layers */
 	struct super_block *same_sb;
 	/* Did we take the inuse lock? */
