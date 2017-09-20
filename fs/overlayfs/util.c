@@ -540,6 +540,10 @@ bool ovl_need_index(struct dentry *dentry)
 	    !d_is_dir(lower) && d_inode(lower)->i_nlink > 1)
 		return true;
 
+	/* Index all regular files if consistent fd is enabled */
+	if (ofs->config.consistent_fd && d_is_reg(lower))
+		return true;
+
 	return false;
 }
 
