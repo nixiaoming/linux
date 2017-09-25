@@ -1055,7 +1055,7 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			index = NULL;
 			break;
 		}
-		err = ovl_verify_index(index, lowerstack, numlower);
+		err = ovl_verify_index(index, mnt, lowerstack, numlower);
 		if (err) {
 			if (err == -EROFS)
 				break;

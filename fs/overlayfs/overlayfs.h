@@ -263,8 +263,8 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 /* namei.c */
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		      bool is_upper, bool set);
-int ovl_verify_index(struct dentry *index, struct path *lowerstack,
-		     unsigned int numlower);
+int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
+		     struct path *lowerstack, unsigned int numlower);
 int ovl_get_index_name(struct dentry *origin, struct qstr *name);
 int ovl_path_next(int idx, struct dentry *dentry, struct path *path, int *idxp);
 struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
