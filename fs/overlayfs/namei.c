@@ -412,16 +412,13 @@ int ovl_verify_index(struct dentry *index, struct path *lowerstack,
 	/*
 	 * Directory index entries are going to be used for looking up
 	 * redirected upper dirs by lower dir fh when decoding an overlay
-	 * file handle of a merge dir. Whiteout index entries are going to be
-	 * used as an indication that an exported overlay file handle should
-	 * be treated as stale (i.e. after unlink of the overlay inode).
-	 * We don't know the verification rules for directory and whiteout
-	 * index entries, because they have not been implemented yet, so return
-	 * EROFS if those entries are found to avoid corrupting an index that
-	 * was created by a newer kernel.
+	 * file handle of a merge dir.  We don't know the verification rules
+	 * for directory index entries, because they have not been implemented
+	 * yet, so return EROFS if those entries are found to avoid corrupting
+	 * an index that was created by a newer kernel.
 	 */
 	err = -EROFS;
-	if (d_is_dir(index) || ovl_is_whiteout(index))
+	if (d_is_dir(index))
 		goto fail;
 
 	err = -EINVAL;
@@ -437,6 +434,17 @@ int ovl_verify_index(struct dentry *index, struct path *lowerstack,
 	err = -EINVAL;
 	if (hex2bin((u8 *)fh, index->d_name.name, len) || len != fh->len)
 		goto fail;
+
+	/*
+	 * Whiteout index entries are used as an indication that
+	 * an exported overlay file handle should be treated as stale
+	 * (i.e. after unlink/rmdir of the overlay inode).
+	 * These entries contain no xattr.
+	 * TODO: cleanup stale whiteout index (try to decode index name).
+	 */
+	err = 0;
+	if (ovl_is_whiteout(index))
+		goto out;
 
 	err = ovl_verify_origin_fh(index, fh);
 	if (err)
