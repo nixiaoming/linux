@@ -17,6 +17,7 @@
 #include <linux/cred.h>
 #include <linux/ratelimit.h>
 #include "overlayfs.h"
+#include "ovl_entry.h"
 
 struct ovl_cache_entry {
 	unsigned int len;
@@ -1019,13 +1020,16 @@ void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
 	}
 }
 
-int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
-			 struct path *lowerstack, unsigned int numlower)
+int ovl_indexdir_cleanup(struct ovl_fs *ofs, struct path *lowerstack,
+			 unsigned int numlower)
 {
 	int err;
+	struct dentry *workdir = ofs->workdir;
+	struct dentry *indexdir = ofs->indexdir;
+	struct vfsmount *mnt = ofs->upper_mnt;
 	struct dentry *index = NULL;
-	struct inode *dir = dentry->d_inode;
-	struct path path = { .mnt = mnt, .dentry = dentry };
+	struct inode *dir = indexdir->d_inode;
+	struct path path = { .mnt = mnt, .dentry = indexdir };
 	LIST_HEAD(list);
 	struct rb_root root = RB_ROOT;
 	struct ovl_cache_entry *p;
@@ -1041,7 +1045,6 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 	if (err)
 		goto out;
 
-	inode_lock_nested(dir, I_MUTEX_PARENT);
 	list_for_each_entry(p, &list, l_node) {
 		if (p->name[0] == '.') {
 			if (p->len == 1)
@@ -1049,25 +1052,44 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			if (p->len == 2 && p->name[1] == '.')
 				continue;
 		}
-		index = lookup_one_len(p->name, dentry, p->len);
+
+		err = ovl_lock_rename_workdir(workdir, indexdir);
+		if (err)
+			break;
+
+		index = lookup_one_len(p->name, indexdir, p->len);
 		if (IS_ERR(index)) {
 			err = PTR_ERR(index);
 			index = NULL;
 			break;
 		}
 		err = ovl_verify_index(index, mnt, lowerstack, numlower);
-		if (err) {
-			if (err == -EROFS)
-				break;
+		if (!err || err == -EROFS || err == -ENOMEM) {
+			/*
+			 * Abort mount to avoid corrupting the index if
+			 * an incompatible index entry was found or on out
+			 * of memory.
+			 */
+			goto unlock;
+		} else if (err == -ENOENT) {
+			/*
+			 * Whiteout orphan index to block future open by
+			 * handle after overlay nlink dropepd to zero.
+			 */
+			err = ovl_cleanup_and_whiteout(workdir, dir, index);
+		} else {
+			/* Cleanup stale and invalid index entries */
 			err = ovl_cleanup(dir, index);
-			if (err)
-				break;
 		}
+
+unlock:
+		unlock_rename(workdir, indexdir);
 		dput(index);
 		index = NULL;
+		if (err)
+			break;
 	}
 	dput(index);
-	inode_unlock(dir);
 out:
 	ovl_cache_free(&list);
 	if (err)

@@ -1100,9 +1100,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 			/* Cleanup bad/stale/orphan index entries */
 			if (!err)
-				err = ovl_indexdir_cleanup(ufs->indexdir,
-							   ufs->upper_mnt,
-							   stack, numlower);
+				err = ovl_indexdir_cleanup(ufs, stack,
+							   numlower);
 		}
 		if (err || !ufs->indexdir)
 			pr_warn("overlayfs: try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");
