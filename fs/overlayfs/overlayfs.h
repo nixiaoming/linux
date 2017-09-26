@@ -33,6 +33,20 @@ enum ovl_flag {
 };
 
 /*
+ * Which files should be indexed on copy up.
+ * The default is casted from the boolean module config var, which can
+ * only be used to configure indexing of lower hardlinks or to turn off
+ * indexing. Other values can only be configures via mount option
+ * (e.g. index=all).
+ */
+enum ovl_index {
+	OVL_INDEX_OFF = (int)false,
+	OVL_INDEX_ON = (int)true,
+	OVL_INDEX_NLINK = OVL_INDEX_ON,
+	OVL_INDEX_ALL,
+};
+
+/*
  * The tuple (fh,uuid) is a universal unique identifier for a copy up origin,
  * where:
  * origin.fh	- exported file handle of the lower file

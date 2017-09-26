@@ -302,7 +302,8 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 			   ufs->config.redirect_dir ? "on" : "off");
 	if (ufs->config.index != ovl_index_def)
 		seq_printf(m, ",index=%s",
-			   ufs->config.index ? "on" : "off");
+			   ufs->config.index == OVL_INDEX_ALL ? "all" :
+			   (ufs->config.index ? "on" : "off"));
 	if (ufs->config.verify_dir)
 		seq_puts(m, ",verify_dir");
 	return 0;
@@ -338,6 +339,7 @@ enum {
 	OPT_REDIRECT_DIR_OFF,
 	OPT_INDEX_ON,
 	OPT_INDEX_OFF,
+	OPT_INDEX_ALL,
 	OPT_VERIFY_DIR,
 	OPT_ERR,
 };
@@ -351,6 +353,7 @@ static const match_table_t ovl_tokens = {
 	{OPT_REDIRECT_DIR_OFF,		"redirect_dir=off"},
 	{OPT_INDEX_ON,			"index=on"},
 	{OPT_INDEX_OFF,			"index=off"},
+	{OPT_INDEX_ALL,			"index=all"},
 	{OPT_VERIFY_DIR,		"verify_dir"},
 	{OPT_ERR,			NULL}
 };
@@ -425,11 +428,15 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			break;
 
 		case OPT_INDEX_ON:
-			config->index = true;
+			config->index = OVL_INDEX_NLINK;
 			break;
 
 		case OPT_INDEX_OFF:
-			config->index = false;
+			config->index = 0;
+			break;
+
+		case OPT_INDEX_ALL:
+			config->index = OVL_INDEX_ALL;
 			break;
 
 		case OPT_VERIFY_DIR:
@@ -664,7 +671,7 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	 */
 	if (ofs->config.upperdir && !ovl_can_decode_fh(path->dentry->d_sb) &&
 	    (ofs->config.index || ofs->config.verify_dir)) {
-		ofs->config.index = false;
+		ofs->config.index = 0;
 		ofs->config.verify_dir = false;
 		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off and no verify_dir.\n",
 			name);
@@ -867,7 +874,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 
 	ufs->config.redirect_dir = ovl_redirect_dir_def;
-	ufs->config.index = ovl_index_def;
+	ufs->config.index = (enum ovl_index) ovl_index_def;
 	err = ovl_parse_opt((char *) data, &ufs->config);
 	if (err)
 		goto out_free_config;
@@ -1031,7 +1038,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			if (err) {
 				ufs->noxattr = true;
 				ufs->config.redirect_dir = false;
-				ufs->config.index = false;
+				ufs->config.index = 0;
 				ufs->config.verify_dir = false;
 				pr_warn("overlayfs: upper fs does not support xattr, falling back to redirect_dir=off, index=off, no verify_dir and no opaque dir.\n");
 			} else {
@@ -1041,7 +1048,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			/* Check if upper/work fs supports file handles */
 			if (ufs->config.index &&
 			    !ovl_can_decode_fh(ufs->workdir->d_sb)) {
-				ufs->config.index = false;
+				ufs->config.index = 0;
 				pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
 			}
 		}
@@ -1105,7 +1112,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Show index=off/on in /proc/mounts for any of the reasons above */
 	if (!ufs->indexdir)
-		ufs->config.index = false;
+		ufs->config.index = 0;
 
 	if (ufs->config.verify_dir || ufs->indexdir) {
 		/* Verify lower root is upper root origin */
