@@ -516,7 +516,7 @@ bool ovl_need_index(struct dentry *dentry)
 	if (!lower || !ofs->indexdir)
 		return false;
 
-	if (!d_is_dir(lower) && ofs->config.index == OVL_INDEX_ALL)
+	if (ofs->config.index == OVL_INDEX_ALL)
 		return true;
 
 	/* Index only lower hardlinks on copy up */
