@@ -662,6 +662,21 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		if (!this)
 			continue;
 
+		/*
+		 * If no origin fh is stored in upper of a merge dir, store fh
+		 * of upper most lower dir. We do this so we can filter out
+		 * whiteouts in case lower dir is removed offline and this upper
+		 * becomes a pure upper in a future mount. With 'verify_dir'
+		 * mount option, verify that lower matches stored origin fh.
+		 */
+		if (this && upperdentry && !ctr) {
+			err = ovl_verify_origin(upperdentry, this, false, true);
+			if (err && ovl_verify_dir(dentry->d_sb)) {
+				dput(this);
+				break;
+			}
+		}
+
 		stack[ctr].dentry = this;
 		stack[ctr].layer = lower.layer;
 		ctr++;
