@@ -234,6 +234,13 @@ bool ovl_redirect_dir(struct super_block *sb)
 	return ofs->config.redirect_dir && !ofs->noxattr;
 }
 
+bool ovl_verify_dir(struct super_block *sb)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	return ofs->config.verify_dir && !ofs->noxattr;
+}
+
 const char *ovl_dentry_get_redirect(struct dentry *dentry)
 {
 	return OVL_I(d_inode(dentry))->redirect;

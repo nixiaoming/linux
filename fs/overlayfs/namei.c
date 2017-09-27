@@ -666,6 +666,18 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		if (!this)
 			continue;
 
+		/*
+		 * Verify that uppermost lower matches the copy up origin fh.
+		 * If no origin fh is stored in upper, store fh of lower dir.
+		 */
+		if (this && upperdentry && !ctr) {
+			err = ovl_verify_origin(upperdentry, this, false, true);
+			if (err && ovl_verify_dir(dentry->d_sb)) {
+				dput(this);
+				break;
+			}
+		}
+
 		stack[ctr].dentry = this;
 		stack[ctr].mnt = lowerpath.mnt;
 		ctr++;
