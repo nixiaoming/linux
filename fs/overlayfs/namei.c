@@ -702,6 +702,19 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		if (!this)
 			continue;
 
+		/*
+		 * When 'verify' feature is enabled, verify that lower dir
+		 * matches the stored origin fh. If no origin fh is stored in
+		 * upper of a merge dir, store fh of upper most lower dir.
+		 */
+		if (upperdentry && !ctr && ovl_verify(dentry->d_sb)) {
+			err = ovl_verify_origin(upperdentry, this, false, true);
+			if (err) {
+				dput(this);
+				break;
+			}
+		}
+
 		stack[ctr].dentry = this;
 		stack[ctr].layer = lower.layer;
 		ctr++;
