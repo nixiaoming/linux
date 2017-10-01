@@ -609,11 +609,9 @@ int ovl_get_index_name(struct dentry *origin, struct qstr *name)
 
 }
 
-static struct dentry *ovl_lookup_index(struct dentry *dentry,
-				       struct dentry *upper,
-				       struct dentry *origin)
+struct dentry *ovl_lookup_index(struct dentry *indexdir, struct dentry *upper,
+				struct dentry *origin)
 {
-	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
 	struct dentry *index;
 	struct inode *inode;
 	struct qstr name;
@@ -624,7 +622,7 @@ static struct dentry *ovl_lookup_index(struct dentry *dentry,
 	if (err)
 		return ERR_PTR(err);
 
-	index = lookup_one_len_unlocked(name.name, ofs->indexdir, name.len);
+	index = lookup_one_len_unlocked(name.name, indexdir, name.len);
 	if (IS_ERR(index)) {
 		err = PTR_ERR(index);
 		if (err == -ENOENT) {
@@ -645,6 +643,15 @@ static struct dentry *ovl_lookup_index(struct dentry *dentry,
 					    upper);
 		}
 		goto out_dput;
+	} else if (ovl_is_whiteout(index) && !upper) {
+		/*
+		 * When index lookup is called with no upper for decoding an
+		 * overlay file handle, a whiteout index implies that decode
+		 * should treat file handle as stale.
+		 */
+		dput(index);
+		index = ERR_PTR(-ESTALE);
+		goto out;
 	} else if (ovl_dentry_weird(index) || ovl_is_whiteout(index) ||
 		   ((inode->i_mode ^ d_inode(origin)->i_mode) & S_IFMT)) {
 		/*
@@ -870,8 +877,8 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	 * TODO: update origin and index in case lower dir has changed and
 	 *       store new generation number xattr in index for NFS export.
 	 */
-	if (ctr && ovl_indexdir(dentry->d_sb) && origin) {
-		index = ovl_lookup_index(dentry, upperdentry, origin);
+	if (ctr && ofs->indexdir && origin) {
+		index = ovl_lookup_index(ofs->indexdir, upperdentry, origin);
 		if (IS_ERR(index)) {
 			err = PTR_ERR(index);
 			index = NULL;

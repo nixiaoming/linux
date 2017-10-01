@@ -241,25 +241,14 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 
 }
 
-static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
-				  int fh_len, int fh_type, bool to_parent)
+static struct dentry *ovl_upper_fh_to_d(struct super_block *sb,
+					struct ovl_fh *fh, bool to_parent)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
 	struct vfsmount *mnt = ofs->upper_mnt;
 	struct dentry *upper;
-	struct ovl_fh *fh = (struct ovl_fh *) fid;
-	int err;
 
-	/* TODO: handle file handle with parent from different layer */
-	if (fh_type != OVL_FILEID_WITHOUT_PARENT)
-		return ERR_PTR(-EINVAL);
-
-	err = ovl_check_fh_len(fh, fh_len << 2);
-	if (err)
-		return ERR_PTR(err);
-
-	/* TODO: handle decoding of non pure upper */
-	if (!mnt || !(fh->flags & OVL_FH_FLAG_PATH_UPPER))
+	if (!mnt)
 		return NULL;
 
 	upper = ovl_decode_fh(fh, mnt);
@@ -286,6 +275,72 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 
 	/* Find or instantiate a pure upper dentry */
 	return ovl_obtain_alias(sb, upper, NULL);
+}
+
+static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
+				  int fh_len, int fh_type, bool to_parent)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+	struct dentry *upper = NULL;
+	struct dentry *index = NULL;
+	struct dentry *origin = NULL;
+	struct dentry *dentry = NULL;
+	struct ovl_fh *fh = (struct ovl_fh *) fid;
+	int err, i;
+
+	/* TODO: handle file handle with parent from different layer */
+	if (fh_type != OVL_FILEID_WITHOUT_PARENT)
+		return ERR_PTR(-EINVAL);
+
+	err = ovl_check_fh_len(fh, fh_len << 2);
+	if (err)
+		return ERR_PTR(err);
+
+	if (fh->flags & OVL_FH_FLAG_PATH_UPPER)
+		return ovl_upper_fh_to_d(sb, fh, to_parent);
+
+	/* TODO: decode parent from fh_type OVL_FILEID_WITH_PARENT */
+	if (to_parent)
+		return ERR_PTR(-EINVAL);
+
+	/* Find lower layer by UUID and decode */
+	for (i = 0; i < ofs->numlower; i++) {
+		origin = ovl_decode_fh(fh, ofs->lower_mnt[i]);
+		if (origin)
+			break;
+	}
+
+	if (IS_ERR_OR_NULL(origin))
+		return origin;
+
+	/* Lookup index by decoded origin */
+	index = ovl_lookup_index(ofs->indexdir, NULL, origin);
+	if (IS_ERR(index)) {
+		dput(origin);
+		return index;
+	}
+	if (index) {
+		/* Get upper dentry from index */
+		upper = ovl_index_upper(index, ofs->upper_mnt);
+		err = PTR_ERR(upper);
+		if (IS_ERR(upper))
+			goto out_err;
+
+		err = ovl_verify_origin(upper, origin, false, false);
+		if (err)
+			goto out_err;
+	}
+
+	dentry = ovl_obtain_alias(sb, upper, origin);
+
+out:
+	dput(index);
+	dput(origin);
+	return dentry;
+
+out_err:
+	dentry = ERR_PTR(err);
+	goto out;
 }
 
 static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,

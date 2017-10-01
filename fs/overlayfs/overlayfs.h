@@ -279,11 +279,15 @@ int ovl_check_origin(struct dentry *upperdentry, struct path *lowerstack,
 		     unsigned int *ctrp);
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		      bool is_upper, bool set);
+struct dentry *ovl_index_upper(struct dentry *index, struct vfsmount *mnt);
 int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 		     struct path *lowerstack, unsigned int numlower);
 int ovl_get_index_name(struct dentry *origin, struct qstr *name);
+struct dentry *ovl_lookup_index(struct dentry *indexdir, struct dentry *upper,
+				struct dentry *origin);
 int ovl_path_next(int idx, struct dentry *dentry, struct path *path, int *idxp);
-struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
+struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
+			  unsigned int flags);
 bool ovl_lower_positive(struct dentry *dentry);
 
 /* readdir.c */
