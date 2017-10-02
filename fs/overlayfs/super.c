@@ -1124,6 +1124,27 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		}
 	}
 
+	/*
+	 * NFS export requires that all layers support file handles and
+	 * that all files and dirs are indexed on copy up (index=all).
+	 * We check that all layers support file handles for enabling index.
+	 *
+	 * A directory index has all the information to instantiate the
+	 * encoded overlay directory dentry IFF a merge directory is limited
+	 * to a single lower dir and the lower dir matches the copy up origin
+	 * stored in upper dir (verify_dir).
+	 *
+	 * XXX: index=all can be relaxed by indexing on rename and looking
+	 *      up non-indexed overlay dentries by lower dentry path.
+	 *      verify_dir can be relaxed by updating index when mismatch
+	 *      lower merge dir is found and update index generation.
+	 *      single lower layer can be relaxed by looking up overlay
+	 *      directory dentries by lower or upper dentry path.
+	 */
+	if (ufs->config.index == OVL_INDEX_ALL &&
+	    ufs->config.verify_dir && ufs->numlower == 1)
+		sb->s_export_op = &ovl_export_operations;
+
 	if (remote)
 		sb->s_d_op = &ovl_reval_dentry_operations;
 	else
