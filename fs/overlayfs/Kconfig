@@ -67,6 +67,8 @@ config OVERLAY_FS_VERIFY
 
 	  The verify feature prevents multiple redirects to the same lower dir
 	  and prevents broken hardlinks from using the same inode number.
+	  The verify feature is required for exporting an overlay filesystem
+	  subtree as an NFS share.
 
 	  Note, that verify feature is not backward compatible.  That is,
 	  mounting an overlay with verification index entries on a kernel
