@@ -1307,6 +1307,14 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		ofs->config.verify = false;
 	}
 
+	/*
+	 * NFS export requires that all layers support file handles and that
+	 * all files and dirs are indexed on copy up (verify=on). We already
+	 * check that all layers support file handles for enabling index.
+	 */
+	if (ofs->config.verify)
+		sb->s_export_op = &ovl_export_operations;
+
 	/* Never override disk quota limits or use reserved space */
 	cap_lower(cred->cap_effective, CAP_SYS_RESOURCE);
 
