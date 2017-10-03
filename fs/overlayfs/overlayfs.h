@@ -259,6 +259,11 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 	return ovl_check_dir_xattr(dentry, OVL_XATTR_IMPURE);
 }
 
+static inline bool ovl_is_opaquedir(struct dentry *dentry)
+{
+	return ovl_check_dir_xattr(dentry, OVL_XATTR_OPAQUE);
+}
+
 
 /* namei.c */
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,

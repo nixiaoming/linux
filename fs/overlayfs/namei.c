@@ -209,11 +209,6 @@ static struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
 	return origin;
 }
 
-static bool ovl_is_opaquedir(struct dentry *dentry)
-{
-	return ovl_check_dir_xattr(dentry, OVL_XATTR_OPAQUE);
-}
-
 static int ovl_lookup_single(struct dentry *base, struct ovl_lookup_data *d,
 			     const char *name, unsigned int namelen,
 			     size_t prelen, const char *post,

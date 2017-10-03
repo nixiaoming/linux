@@ -138,7 +138,7 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 	}
 
 	dentry = d_obtain_alias(inode);
-	if (IS_ERR(dentry))
+	if (IS_ERR(dentry) || dentry == dentry->d_sb->s_root)
 		return dentry;
 
 	if (dentry->d_fsdata) {
@@ -159,26 +159,33 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 
 	dentry->d_fsdata = oe;
 	ovl_dentry_set_upper_alias(dentry);
+	if (d_is_dir(upper) && ovl_is_opaquedir(upper))
+		ovl_dentry_set_opaque(dentry);
 
 	return dentry;
 
 }
 
-static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
-				       int fh_len, int fh_type)
+static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
+				  int fh_len, int fh_type, bool to_parent)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
 	struct vfsmount *mnt = ofs->upper_mnt;
 	const struct export_operations *real_op;
+	struct dentry *(*fh_to_d)(struct super_block *, struct fid *, int, int);
 	struct dentry *upper;
 
 	/* TODO: handle decoding of non pure upper */
-	if (!mnt)
+	if (!mnt || !mnt->mnt_sb->s_export_op)
 		return NULL;
 
 	real_op = mnt->mnt_sb->s_export_op;
+	fh_to_d = to_parent ? real_op->fh_to_parent : real_op->fh_to_dentry;
+	if (!fh_to_d)
+		return NULL;
+
 	/* TODO: decode ovl_fh format file handle */
-	upper = real_op->fh_to_dentry(mnt->mnt_sb, fid, fh_len, fh_type);
+	upper = fh_to_d(mnt->mnt_sb, fid, fh_len, fh_type);
 	if (IS_ERR_OR_NULL(upper))
 		return upper;
 
@@ -186,7 +193,43 @@ static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 	return ovl_obtain_alias(sb, upper, NULL);
 }
 
+static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
+				       int fh_len, int fh_type)
+{
+	return ovl_fh_to_d(sb, fid, fh_len, fh_type, false);
+}
+
+static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
+				       int fh_len, int fh_type)
+{
+	return ovl_fh_to_d(sb, fid, fh_len, fh_type, true);
+}
+
+static struct dentry *ovl_get_parent(struct dentry *dentry)
+{
+	const struct export_operations *real_op;
+	struct dentry *upper;
+
+	/* TODO: handle connecting of non pure upper */
+	if (ovl_dentry_lower(dentry))
+		return ERR_PTR(-EACCES);
+
+	upper = ovl_dentry_upper(dentry);
+	real_op = upper->d_sb->s_export_op;
+	if (!real_op || !real_op->get_parent)
+		return ERR_PTR(-EACCES);
+
+	upper = real_op->get_parent(upper);
+	if (IS_ERR(upper))
+		return upper;
+
+	/* Find or instantiate a pure upper dentry */
+	return ovl_obtain_alias(dentry->d_sb, upper, NULL);
+}
+
 const struct export_operations ovl_export_operations = {
 	.encode_fh      = ovl_encode_inode_fh,
 	.fh_to_dentry	= ovl_fh_to_dentry,
+	.fh_to_parent	= ovl_fh_to_parent,
+	.get_parent	= ovl_get_parent,
 };
