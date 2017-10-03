@@ -272,6 +272,11 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 	return ovl_check_dir_xattr(dentry, OVL_XATTR_IMPURE);
 }
 
+static inline bool ovl_is_opaquedir(struct dentry *dentry)
+{
+	return ovl_check_dir_xattr(dentry, OVL_XATTR_OPAQUE);
+}
+
 int ovl_is_features_dir(struct dentry *dentry, const char ***features);
 bool ovl_is_feature_supported(const char *name, int namelen,
 			      const char **features);
