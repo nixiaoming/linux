@@ -16,15 +16,40 @@
 #include <linux/exportfs.h>
 #include "overlayfs.h"
 
+/* Check if dentry is pure upper ancestry up to root */
+static bool ovl_is_pure_upper_or_root(struct dentry *dentry, int connectable)
+{
+	struct dentry *parent = NULL;
+
+	/* For non-connectable non-dir we don't need to check ancestry */
+	if (!d_is_dir(dentry) && !connectable)
+		return !ovl_dentry_lower(dentry);
+
+	dget(dentry);
+	while (!IS_ROOT(dentry) && !ovl_dentry_lower(dentry)) {
+		parent = dget_parent(dentry);
+		dput(dentry);
+		dentry = parent;
+	}
+	dput(dentry);
+
+	return dentry == dentry->d_sb->s_root;
+}
+
 /* TODO: add export_operations method dentry_to_fh() ??? */
 static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 			    int *max_len, int connectable)
 {
-	struct dentry *lower = ovl_dentry_lower(dentry);
 	int type;
 
-	/* TODO: handle encoding of non pure upper */
-	if (lower)
+	/*
+	 * Overlay root dir inode is hashed and encoded as pure upper, because
+	 * root dir dentry is born upper and not indexed. It is not a problem
+	 * that root dir is not indexed, because root dentry is pinned to cache.
+	 *
+	 * TODO: handle encoding of non pure upper.
+	 */
+	if (!ovl_is_pure_upper_or_root(dentry, connectable))
 		return FILEID_INVALID;
 
 	/*
@@ -39,20 +64,58 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 	return type;
 }
 
+/* Find an alias of inode. If @dir is non NULL, find a child alias */
+static struct dentry *ovl_find_alias(struct inode *inode, struct inode *dir)
+{
+	struct dentry *dentry, *parent;
+	struct dentry *toput = NULL;
+
+	/* Parent inode is never provided when encoding a directory */
+	if (!dir || WARN_ON(!S_ISDIR(dir->i_mode) || S_ISDIR(inode->i_mode)))
+		return d_find_alias(inode);
+
+	/* Find an alias of inode who is a child of parent dir */
+	spin_lock(&inode->i_lock);
+	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+		dget(dentry);
+		spin_unlock(&inode->i_lock);
+		if (toput)
+			dput(toput);
+		parent = dget_parent(dentry);
+		if (parent && parent->d_inode == dir) {
+			dput(parent);
+			return dentry;
+		}
+		dput(parent);
+		spin_lock(&inode->i_lock);
+		toput = dentry;
+	}
+	spin_unlock(&inode->i_lock);
+
+	if (toput)
+		dput(toput);
+
+	return NULL;
+}
+
 static int ovl_encode_inode_fh(struct inode *inode, u32 *fh, int *max_len,
 			       struct inode *parent)
 {
-	struct dentry *dentry = d_find_alias(inode);
+	struct dentry *dentry = ovl_find_alias(inode, parent);
 	int type;
 
-	if (!dentry)
+	/*
+	 * This is called from exportfs_encode_inode_fh(), which is called from
+	 * exportfs_encode_fh() that hold a reference on both inode and parent
+	 * dentries.
+	 *
+	 * TODO: add export_operations method dentry_to_fh() so we get the
+	 *       file and parent dentries instead of having to find them.
+	 */
+	if (WARN_ON(!dentry))
 		return FILEID_INVALID;
 
-	/* TODO: handle encoding of non-dir connectable file handle */
-	if (parent)
-		return FILEID_INVALID;
-
-	type = ovl_dentry_to_fh(dentry, (struct fid *)fh, max_len, 0);
+	type = ovl_dentry_to_fh(dentry, (struct fid *)fh, max_len, !!parent);
 
 	dput(dentry);
 	return type;
