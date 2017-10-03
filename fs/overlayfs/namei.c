@@ -108,7 +108,7 @@ static int ovl_acceptable(void *mnt, struct dentry *dentry)
  * Return -ENODATA for "origin unknown".
  * Return <0 for an invalid file handle.
  */
-static int ovl_check_fh_len(struct ovl_fh *fh, int fh_len)
+int ovl_check_fh_len(struct ovl_fh *fh, int fh_len)
 {
 	if (fh_len < sizeof(struct ovl_fh) || fh_len < fh->len)
 		return -EINVAL;
@@ -172,7 +172,7 @@ invalid:
 	goto out;
 }
 
-static struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
+struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
 {
 	struct dentry *origin;
 	int bytes;
@@ -412,7 +412,7 @@ int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 	struct ovl_fh *fh;
 	int err;
 
-	fh = ovl_encode_fh(origin, is_upper);
+	fh = ovl_encode_fh(origin, is_upper, false);
 	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
 		goto fail;
@@ -574,7 +574,11 @@ int ovl_get_index_name(struct dentry *origin, struct qstr *name)
 	struct ovl_fh *fh;
 	char *n, *s;
 
-	fh = ovl_encode_fh(origin, false);
+	/*
+	 * We encode a non-connectable file handle for index, because the index
+	 * must be unqiue and invariant of lower hardlink aliases.
+	 */
+	fh = ovl_encode_fh(origin, false, false);
 	if (IS_ERR(fh))
 		return PTR_ERR(fh);
 

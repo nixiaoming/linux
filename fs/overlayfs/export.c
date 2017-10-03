@@ -41,7 +41,8 @@ static bool ovl_is_pure_upper_or_root(struct dentry *dentry, int connectable)
 static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 			    int *max_len, int connectable)
 {
-	int type;
+	const struct ovl_fh *fh;
+	int len = *max_len << 2;
 
 	/*
 	 * Overlay root dir inode is hashed and encoded as pure upper, because
@@ -49,20 +50,27 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 	 * that root dir is not indexed, because root dentry is pinned to cache.
 	 *
 	 * TODO: handle encoding of non pure upper.
+	 *       Parent and child may not be on the same layer, so encode
+	 *       connectable file handle as an array of self ovl_fh and
+	 *       parent ovl_fh (type OVL_FILEID_WITH_PARENT).
 	 */
 	if (!ovl_is_pure_upper_or_root(dentry, connectable))
 		return FILEID_INVALID;
 
-	/*
-	 * Ask real fs to encode the inode of the real upper dentry.
-	 * When decoding we ask real fs for the upper dentry and use
-	 * the real inode to get the overlay inode.
-	 */
-	type = exportfs_encode_fh(ovl_dentry_upper(dentry), fid, max_len,
-				  connectable);
+	fh = ovl_encode_fh(ovl_dentry_upper(dentry), true, connectable);
+	if (IS_ERR(fh))
+		return FILEID_INVALID;
 
-	/* TODO: encode an ovl_fh struct and return OVL file handle type */
-	return type;
+	if (fh->len > len) {
+		kfree(fh);
+		return FILEID_INVALID;
+	}
+
+	memcpy((char *)fid, (char *)fh, len);
+	*max_len = len >> 2;
+	kfree(fh);
+
+	return OVL_FILEID_WITHOUT_PARENT;
 }
 
 /* Find an alias of inode. If @dir is non NULL, find a child alias */
@@ -171,23 +179,43 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
 	struct vfsmount *mnt = ofs->upper_mnt;
-	const struct export_operations *real_op;
-	struct dentry *(*fh_to_d)(struct super_block *, struct fid *, int, int);
 	struct dentry *upper;
+	struct ovl_fh *fh = (struct ovl_fh *) fid;
+	int err;
+
+	/* TODO: handle file handle with parent from different layer */
+	if (fh_type != OVL_FILEID_WITHOUT_PARENT)
+		return ERR_PTR(-EINVAL);
+
+	err = ovl_check_fh_len(fh, fh_len << 2);
+	if (err)
+		return ERR_PTR(err);
 
 	/* TODO: handle decoding of non pure upper */
-	if (!mnt || !mnt->mnt_sb->s_export_op)
+	if (!mnt || !(fh->flags & OVL_FH_FLAG_PATH_UPPER))
 		return NULL;
 
-	real_op = mnt->mnt_sb->s_export_op;
-	fh_to_d = to_parent ? real_op->fh_to_parent : real_op->fh_to_dentry;
-	if (!fh_to_d)
-		return NULL;
-
-	/* TODO: decode ovl_fh format file handle */
-	upper = fh_to_d(mnt->mnt_sb, fid, fh_len, fh_type);
+	upper = ovl_decode_fh(fh, mnt);
 	if (IS_ERR_OR_NULL(upper))
 		return upper;
+
+	/*
+	 * ovl_decode_fh() will return a connected dentry if the encoded real
+	 * file handle was connectable (the case of pure upper ancestry).
+	 * fh_to_parent() needs to instantiate an overlay dentry from real
+	 * upper parent in that case.
+	 */
+	if (to_parent) {
+		struct dentry *parent;
+
+		if (upper->d_flags & DCACHE_DISCONNECTED) {
+			dput(upper);
+			return NULL;
+		}
+		parent = dget_parent(upper);
+		dput(upper);
+		upper = parent;
+	}
 
 	/* Find or instantiate a pure upper dentry */
 	return ovl_obtain_alias(sb, upper, NULL);
@@ -207,21 +235,25 @@ static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
 
 static struct dentry *ovl_get_parent(struct dentry *dentry)
 {
-	const struct export_operations *real_op;
 	struct dentry *upper;
 
 	/* TODO: handle connecting of non pure upper */
 	if (ovl_dentry_lower(dentry))
 		return ERR_PTR(-EACCES);
 
+	/*
+	 * When ovl_fh_to_d() returns an overlay dentry, its real upper
+	 * dentry should be positive and connected. The reconnecting of
+	 * the upper dentry is done by ovl_decode_fh() when decoding the
+	 * real upper file handle, so here we have the upper dentry parent
+	 * and we need to instantiate an overlay dentry with upper dentry
+	 * parent.
+	 */
 	upper = ovl_dentry_upper(dentry);
-	real_op = upper->d_sb->s_export_op;
-	if (!real_op || !real_op->get_parent)
-		return ERR_PTR(-EACCES);
+	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
+		return ERR_PTR(-ESTALE);
 
-	upper = real_op->get_parent(upper);
-	if (IS_ERR(upper))
-		return upper;
+	upper = dget_parent(upper);
 
 	/* Find or instantiate a pure upper dentry */
 	return ovl_obtain_alias(dentry->d_sb, upper, NULL);

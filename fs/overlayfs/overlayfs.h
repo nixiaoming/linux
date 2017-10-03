@@ -72,6 +72,11 @@ enum ovl_index {
 #error Endianness not defined
 #endif
 
+/* The type returned by overlay encode_fh when encoding an ovl_fh handle */
+#define OVL_FILEID_WITHOUT_PARENT	0xf1
+/* The type returned by overlay encode_fh when encoding two ovl_fh handles */
+#define OVL_FILEID_WITH_PARENT		0xf2
+
 /* On-disk and in-memeory format for redirect by file handle */
 struct ovl_fh {
 	u8 version;	/* 0 */
@@ -266,6 +271,8 @@ static inline bool ovl_is_opaquedir(struct dentry *dentry)
 
 
 /* namei.c */
+int ovl_check_fh_len(struct ovl_fh *fh, int fh_len);
+struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt);
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		      bool is_upper, bool set);
 int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
@@ -341,7 +348,8 @@ int ovl_copy_up(struct dentry *dentry);
 int ovl_copy_up_flags(struct dentry *dentry, int flags);
 int ovl_copy_xattr(struct dentry *old, struct dentry *new);
 int ovl_set_attr(struct dentry *upper, struct kstat *stat);
-struct ovl_fh *ovl_encode_fh(struct dentry *lower, bool is_upper);
+struct ovl_fh *ovl_encode_fh(struct dentry *dentry, bool is_upper,
+			     bool connectable);
 
 /* export.c */
 extern const struct export_operations ovl_export_operations;

@@ -233,25 +233,21 @@ int ovl_set_attr(struct dentry *upperdentry, struct kstat *stat)
 	return err;
 }
 
-struct ovl_fh *ovl_encode_fh(struct dentry *lower, bool is_upper)
+struct ovl_fh *ovl_encode_fh(struct dentry *dentry, bool is_upper,
+			     bool connectable)
 {
 	struct ovl_fh *fh;
 	int fh_type, fh_len, dwords;
 	void *buf;
 	int buflen = MAX_HANDLE_SZ;
-	uuid_t *uuid = &lower->d_sb->s_uuid;
+	uuid_t *uuid = &dentry->d_sb->s_uuid;
 
 	buf = kmalloc(buflen, GFP_KERNEL);
 	if (!buf)
 		return ERR_PTR(-ENOMEM);
 
-	/*
-	 * We encode a non-connectable file handle for non-dir, because we
-	 * only need to find the lower inode number and we don't want to pay
-	 * the price or reconnecting the dentry.
-	 */
 	dwords = buflen >> 2;
-	fh_type = exportfs_encode_fh(lower, buf, &dwords, 0);
+	fh_type = exportfs_encode_fh(dentry, buf, &dwords, connectable);
 	buflen = (dwords << 2);
 
 	fh = ERR_PTR(-EIO);
@@ -296,12 +292,16 @@ static int ovl_set_origin(struct dentry *dentry, struct dentry *origin,
 	int err;
 
 	/*
+	 * We encode a non-connectable file handle for non-dir, because we
+	 * only need to find the lower inode number and we don't want to pay
+	 * the price of reconnecting the dentry on lookup.
+	 *
 	 * When lower layer doesn't support export operations store a 'null' fh,
 	 * so we can use the overlay.origin xattr to distignuish between a copy
 	 * up and a pure upper inode.
 	 */
 	if (ovl_can_decode_fh(origin->d_sb)) {
-		fh = ovl_encode_fh(origin, is_upper);
+		fh = ovl_encode_fh(origin, is_upper, false);
 		if (IS_ERR(fh))
 			return PTR_ERR(fh);
 	}
