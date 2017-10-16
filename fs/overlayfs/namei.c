@@ -26,8 +26,7 @@ struct ovl_lookup_data {
 	char *redirect;
 };
 
-static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
-			      size_t prelen, const char *post)
+char *ovl_get_redirect_xattr(struct dentry *dentry, size_t *len)
 {
 	int res;
 	char *s, *next, *buf = NULL;
@@ -35,12 +34,12 @@ static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
 	res = vfs_getxattr(dentry, OVL_XATTR_REDIRECT, NULL, 0);
 	if (res < 0) {
 		if (res == -ENODATA || res == -EOPNOTSUPP)
-			return 0;
+			return NULL;
 		goto fail;
 	}
-	buf = kzalloc(prelen + res + strlen(post) + 1, GFP_KERNEL);
+	buf = kzalloc(res + *len + 1, GFP_KERNEL);
 	if (!buf)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 
 	if (res == 0)
 		goto invalid;
@@ -59,8 +58,33 @@ static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
 	} else {
 		if (strchr(buf, '/') != NULL)
 			goto invalid;
+	}
 
-		memmove(buf + prelen, buf, res);
+	*len = res;
+	return buf;
+
+err_free:
+	kfree(buf);
+	return NULL;
+fail:
+	pr_warn_ratelimited("overlayfs: failed to get redirect (%i)\n", res);
+	goto err_free;
+invalid:
+	pr_warn_ratelimited("overlayfs: invalid redirect (%s)\n", buf);
+	goto err_free;
+}
+
+static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
+			      size_t prelen, const char *post)
+{
+	size_t len = prelen + strlen(post);
+	char *buf = ovl_get_redirect_xattr(dentry, &len);
+
+	if (IS_ERR_OR_NULL(buf))
+		return PTR_ERR(buf);
+
+	if (buf[0] != '/' && prelen) {
+		memmove(buf + prelen, buf, len);
 		memcpy(buf, d->name.name, prelen);
 	}
 
@@ -71,16 +95,6 @@ static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
 	d->name.len = strlen(d->redirect);
 
 	return 0;
-
-err_free:
-	kfree(buf);
-	return 0;
-fail:
-	pr_warn_ratelimited("overlayfs: failed to get redirect (%i)\n", res);
-	goto err_free;
-invalid:
-	pr_warn_ratelimited("overlayfs: invalid redirect (%s)\n", buf);
-	goto err_free;
 }
 
 static int ovl_acceptable(void *mnt, struct dentry *dentry)
@@ -348,9 +362,9 @@ invalid:
 	return -ESTALE;
 }
 
-static int ovl_check_origin(struct dentry *upperdentry,
-			    struct path *lowerstack, unsigned int numlower,
-			    struct path **stackp, unsigned int *ctrp)
+int ovl_check_origin(struct dentry *upperdentry, struct path *lowerstack,
+		     unsigned int numlower, struct path **stackp,
+		     unsigned int *ctrp)
 {
 	struct ovl_fh *fh = ovl_get_origin_fh(upperdentry);
 	int err;

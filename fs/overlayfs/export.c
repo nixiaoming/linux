@@ -176,17 +176,13 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 				       struct dentry *upper,
 				       struct dentry *lower)
 {
+	struct ovl_fs *ofs = sb->s_fs_info;
 	struct inode *inode;
 	struct dentry *dentry;
+	struct dentry *index = lower ? upper : NULL;
 	struct ovl_entry *oe;
 
-	/* TODO: handle decoding of non pure upper */
-	if (lower) {
-		dput(upper);
-		return ERR_PTR(-EINVAL);
-	}
-
-	inode = ovl_get_inode(sb, upper, NULL, NULL);
+	inode = ovl_get_inode(sb, upper, lower, index);
 	if (IS_ERR(inode)) {
 		dput(upper);
 		return ERR_CAST(inode);
@@ -206,16 +202,40 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 		return dentry;
 	}
 
-	oe = ovl_alloc_entry(0);
+	/*
+	 * This implementation is currently limited to non-dir and merge dirs
+	 * with single lower dir. For this reason, NFS export support currently
+	 * requires overlay with single lower layer.
+	 *
+	 * TODO: use ovl_lookup or derivative to populate lowerstack with more
+	 *       lower dirs to support NFS export with multi lower layers.
+	 */
+	oe = ovl_alloc_entry(lower ? 1 : 0);
 	if (!oe) {
 		dput(dentry);
 		return ERR_PTR(-ENOMEM);
 	}
-
+	if (lower) {
+		oe->lowerstack->dentry = dget(lower);
+		oe->lowerstack->mnt = ofs->lower_mnt[0];
+	}
 	dentry->d_fsdata = oe;
-	ovl_dentry_set_upper_alias(dentry);
-	if (d_is_dir(upper) && ovl_is_opaquedir(upper))
-		ovl_dentry_set_opaque(dentry);
+
+	if (upper) {
+		ovl_dentry_set_upper_alias(dentry);
+		if (d_is_dir(upper)) {
+			size_t len = 0;
+			char *redirect = ovl_get_redirect_xattr(upper, &len);
+
+			if (redirect)
+				ovl_dentry_set_redirect(dentry, redirect);
+			if (ovl_is_opaquedir(upper))
+				ovl_dentry_set_opaque(dentry);
+		}
+	}
+
+	if (index)
+		ovl_set_flag(OVL_INDEX, inode);
 
 	return dentry;
 

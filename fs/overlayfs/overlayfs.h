@@ -271,8 +271,12 @@ static inline bool ovl_is_opaquedir(struct dentry *dentry)
 
 
 /* namei.c */
+char *ovl_get_redirect_xattr(struct dentry *dentry, size_t *len);
 int ovl_check_fh_len(struct ovl_fh *fh, int fh_len);
 struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt);
+int ovl_check_origin(struct dentry *upperdentry, struct path *lowerstack,
+		     unsigned int numlower, struct path **stackp,
+		     unsigned int *ctrp);
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		      bool is_upper, bool set);
 int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
