@@ -357,11 +357,14 @@ static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
 
 static struct dentry *ovl_get_parent(struct dentry *dentry)
 {
+	struct dentry *root = dentry->d_sb->s_root;
+	struct ovl_entry *roe = root->d_fsdata;
+	struct dentry *parent;
 	struct dentry *upper;
-
-	/* TODO: handle connecting of non pure upper */
-	if (ovl_dentry_lower(dentry))
-		return ERR_PTR(-EACCES);
+	struct dentry *origin = NULL;
+	struct path *stack = NULL;
+	unsigned int ctr = 0;
+	int err;
 
 	/*
 	 * When ovl_fh_to_d() returns an overlay dentry, its real upper
@@ -369,16 +372,57 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 	 * the upper dentry is done by ovl_decode_fh() when decoding the
 	 * real upper file handle, so here we have the upper dentry parent
 	 * and we need to instantiate an overlay dentry with upper dentry
-	 * parent.
+	 * parent and the lower dir pointed to by origin xattr.
+	 *
+	 * TODO: handle reconnecting of non upper overlay dentry.
 	 */
 	upper = ovl_dentry_upper(dentry);
 	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
 		return ERR_PTR(-ESTALE);
 
 	upper = dget_parent(upper);
+	if (upper == ovl_dentry_upper(root)) {
+		dput(upper);
+		return dget(root);
+	}
 
-	/* Find or instantiate a pure upper dentry */
-	return ovl_obtain_alias(dentry->d_sb, upper, NULL);
+	/* Check if parent is merge dir or pure upper */
+	err = ovl_check_origin(upper, roe->lowerstack, roe->numlower,
+			       &stack, &ctr);
+	if (err)
+		goto out_err;
+
+	if (ctr) {
+		struct dentry *index;
+
+		/*
+		 * Lookup index by decoded origin to verify dir is indexed.
+		 * We only decode upper with origin if it is indexed, so NFS
+		 * export will work only if overlay was mounted with index=all
+		 * from the start.
+		 */
+		origin = stack[0].dentry;
+		index = ovl_lookup_index(ovl_indexdir(dentry->d_sb), upper,
+					 origin);
+		err = index ? PTR_ERR(index) : -ESTALE;
+		if (IS_ERR_OR_NULL(index))
+			goto out_err;
+
+		dput(index);
+	}
+
+	/* Find or instantiate an upper dentry */
+	parent = ovl_obtain_alias(dentry->d_sb, upper, origin);
+
+out:
+	dput(origin);
+	kfree(stack);
+	return parent;
+
+out_err:
+	dput(upper);
+	parent = ERR_PTR(err);
+	goto out;
 }
 
 const struct export_operations ovl_export_operations = {
