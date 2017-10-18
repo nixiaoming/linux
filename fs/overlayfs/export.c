@@ -14,32 +14,15 @@
 #include <linux/mount.h>
 #include <linux/xattr.h>
 #include <linux/exportfs.h>
+#include <linux/ratelimit.h>
 #include "overlayfs.h"
 
-/* Check if dentry is pure upper ancestry up to root */
-static bool ovl_is_pure_upper_or_root(struct dentry *dentry)
-{
-	struct dentry *parent = NULL;
-
-	dget(dentry);
-	while (!IS_ROOT(dentry) && !ovl_dentry_lower(dentry)) {
-		parent = dget_parent(dentry);
-		dput(dentry);
-		dentry = parent;
-	}
-	dput(dentry);
-
-	return dentry == dentry->d_sb->s_root;
-}
-
-/* TODO: add export_operations method dentry_to_fh() ??? */
-static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
-			    int *max_len, int connectable)
+int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct dentry *upper = ovl_dentry_upper(dentry);
-	const struct ovl_fh *fh;
-	int len = *max_len << 2;
+	struct ovl_fh *fh;
+	int len;
 
 	/*
 	 * Overlay root dir inode is hashed and encoded as pure upper, because
@@ -48,15 +31,6 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 	 */
 	if (dentry == dentry->d_sb->s_root)
 		origin = NULL;
-
-	/*
-	 * TODO: handle encoding of non pure upper connectable file handle.
-	 *       Parent and child may not be on the same layer, so encode
-	 *       connectable file handle as an array of self ovl_fh and
-	 *       parent ovl_fh (type OVL_FILEID_WITH_PARENT).
-	 */
-	if (connectable && !ovl_is_pure_upper_or_root(dentry))
-		return FILEID_INVALID;
 
 	/*
 	 * We can only encode upper with origin if it is indexed, so NFS export
@@ -71,7 +45,7 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 	 *       renamed parent directories along the path.
 	 */
 	if (upper && origin && !ovl_test_flag(OVL_INDEX, d_inode(dentry)))
-		return FILEID_INVALID;
+		return -EIO;
 
 	/*
 	 * Copy up directory on encode to create an index. We need the index
@@ -85,14 +59,15 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 	if (d_is_dir(dentry) && !upper) {
 		int err;
 
-		if (ovl_want_write(dentry))
-			return FILEID_INVALID;
+		err = ovl_want_write(dentry);
+		if (err)
+			return err;
 
 		err = ovl_copy_up(dentry);
 
 		ovl_drop_write(dentry);
 		if (err)
-			return FILEID_INVALID;
+			return err;
 
 		upper = ovl_dentry_upper(dentry);
 	}
@@ -103,21 +78,59 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 	 * real file handle. For merge dir and non-dir with origin, encode the
 	 * origin inode. For root dir and pure upper, encode the upper inode.
 	 */
-	fh = ovl_encode_fh(origin ?: upper, !origin, connectable);
-	if (IS_ERR(fh))
-		return FILEID_INVALID;
-
-	if (fh->len > len) {
+	fh = ovl_encode_fh(origin ?: upper, !origin, false);
+	if (fh->len > buflen) {
 		kfree(fh);
-		return FILEID_INVALID;
+		return -EOVERFLOW;
 	}
 
-	memcpy((char *)fid, (char *)fh, fh->len);
-	/* Round up to dwords */
-	*max_len = (len + 3) >> 2;
+	memcpy(buf, (char *)fh, fh->len);
+	len = fh->len;
 	kfree(fh);
 
-	return OVL_FILEID_WITHOUT_PARENT;
+	return len;
+}
+
+/* TODO: add export_operations method dentry_to_fh() ??? */
+static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
+			    int connectable)
+{
+	struct dentry *parent;
+	char *p = (char *)fid;
+	int res, len, rem = *max_len << 2;
+	int type = OVL_FILEID_WITHOUT_PARENT;
+
+	if (WARN_ON(connectable && d_is_dir(dentry)))
+		connectable = 0;
+
+	res = ovl_d_to_fh(dentry, p, rem);
+	if (res <= 0)
+		goto fail;
+
+	len = res;
+
+	if (connectable) {
+		/* Encode parent fh after child fh */
+		parent = dget_parent(dentry);
+		p += res;
+		rem -= res;
+		res = ovl_d_to_fh(parent, p, rem);
+		dput(parent);
+		if (res <= 0)
+			goto fail;
+
+		len += res;
+		type = OVL_FILEID_WITH_PARENT;
+	}
+
+	/* Round up to dwords */
+	*max_len = (len + 3) >> 2;
+	return type;
+
+fail:
+	pr_warn_ratelimited("overlayfs: failed to encode file handle (%pd2, connectable=%d, res=%i, len=%d, rem=%d, max_len=%d)\n",
+			    dentry, connectable, res, len, rem, *max_len << 2);
+	return FILEID_INVALID;
 }
 
 /* Find an alias of inode. If @dir is non NULL, find a child alias */
@@ -154,7 +167,7 @@ static struct dentry *ovl_find_alias(struct inode *inode, struct inode *dir)
 	return NULL;
 }
 
-static int ovl_encode_inode_fh(struct inode *inode, u32 *fh, int *max_len,
+static int ovl_encode_inode_fh(struct inode *inode, u32 *fid, int *max_len,
 			       struct inode *parent)
 {
 	struct dentry *dentry = ovl_find_alias(inode, parent);
@@ -171,7 +184,7 @@ static int ovl_encode_inode_fh(struct inode *inode, u32 *fh, int *max_len,
 	if (WARN_ON(!dentry))
 		return FILEID_INVALID;
 
-	type = ovl_dentry_to_fh(dentry, (struct fid *)fh, max_len, !!parent);
+	type = ovl_dentry_to_fh(dentry, fid, max_len, !!parent);
 
 	dput(dentry);
 	return type;
