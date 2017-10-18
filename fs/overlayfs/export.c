@@ -124,32 +124,35 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 /* Find an alias of inode. If @dir is non NULL, find a child alias */
 static struct dentry *ovl_find_alias(struct inode *inode, struct inode *dir)
 {
-	struct dentry *parent, *child;
-	struct dentry *alias = NULL;
+	struct dentry *dentry, *parent;
+	struct dentry *toput = NULL;
 
 	/* Parent inode is never provided when encoding a directory */
 	if (!dir || WARN_ON(!S_ISDIR(dir->i_mode) || S_ISDIR(inode->i_mode)))
 		return d_find_alias(inode);
 
-	/*
-	 * Run all of the dentries associated with this parent. Since this is
-	 * a directory, there damn well better only be one item on this list.
-	 */
-	spin_lock(&dir->i_lock);
-	hlist_for_each_entry(parent, &dir->i_dentry, d_u.d_alias) {
-		/* Find an alias of inode who is a child of parent */
-		spin_lock(&parent->d_lock);
-		list_for_each_entry(child, &parent->d_subdirs, d_child) {
-			if (child->d_inode == inode) {
-				alias = dget(child);
-				break;
-			}
+	/* Find an alias of inode who is a child of parent dir */
+	spin_lock(&inode->i_lock);
+	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+		dget(dentry);
+		spin_unlock(&inode->i_lock);
+		if (toput)
+			dput(toput);
+		parent = dget_parent(dentry);
+		if (parent && parent->d_inode == dir) {
+			dput(parent);
+			return dentry;
 		}
-		spin_unlock(&parent->d_lock);
+		dput(parent);
+		spin_lock(&inode->i_lock);
+		toput = dentry;
 	}
-	spin_unlock(&dir->i_lock);
+	spin_unlock(&inode->i_lock);
 
-	return alias;
+	if (toput)
+		dput(toput);
+
+	return NULL;
 }
 
 static int ovl_encode_inode_fh(struct inode *inode, u32 *fh, int *max_len,
@@ -158,7 +161,15 @@ static int ovl_encode_inode_fh(struct inode *inode, u32 *fh, int *max_len,
 	struct dentry *dentry = ovl_find_alias(inode, parent);
 	int type;
 
-	if (!dentry)
+	/*
+	 * This is called from exportfs_encode_inode_fh(), which is called from
+	 * exportfs_encode_fh() that hold a reference on both inode and parent
+	 * dentries.
+	 *
+	 * TODO: add export_operations method dentry_to_fh() so we get the
+	 *       file and parent dentries instead of having to find them.
+	 */
+	if (WARN_ON(!dentry))
 		return FILEID_INVALID;
 
 	type = ovl_dentry_to_fh(dentry, (struct fid *)fh, max_len, !!parent);
