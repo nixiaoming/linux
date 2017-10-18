@@ -113,8 +113,9 @@ static int ovl_dentry_to_fh(struct dentry *dentry, struct fid *fid,
 		return FILEID_INVALID;
 	}
 
-	memcpy((char *)fid, (char *)fh, len);
-	*max_len = len >> 2;
+	memcpy((char *)fid, (char *)fh, fh->len);
+	/* Round up to dwords */
+	*max_len = (len + 3) >> 2;
 	kfree(fh);
 
 	return OVL_FILEID_WITHOUT_PARENT;
