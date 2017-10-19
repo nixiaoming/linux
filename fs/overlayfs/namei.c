@@ -359,7 +359,7 @@ invalid:
 			    upperdentry, d_inode(upperdentry)->i_mode & S_IFMT,
 			    d_inode(origin)->i_mode & S_IFMT);
 	dput(origin);
-	return -ESTALE;
+	return -EIO;
 }
 
 int ovl_check_origin(struct dentry *upperdentry, struct path *lowerstack,
