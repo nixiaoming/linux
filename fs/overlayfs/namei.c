@@ -451,17 +451,20 @@ fail:
 /* Get upper dentry from index */
 struct dentry *ovl_index_upper(struct dentry *index, struct vfsmount *mnt)
 {
+	struct ovl_fh *fh;
 	struct path upperpath = { .mnt = mnt };
 	struct path *stack = &upperpath;
-	unsigned int ctr = 0;
 	int err;
 
 	if (!d_is_dir(index))
 		return dget(index);
 
-	err = ovl_check_origin(index, stack, 1, &stack, &ctr);
-	if (!err && !ctr)
-		err = -ENODATA;
+	fh = ovl_get_origin_fh(index);
+	if (IS_ERR_OR_NULL(fh))
+		return ERR_CAST(fh);
+
+	err = ovl_check_origin_fh(fh, index, stack, 1, &stack);
+	kfree(fh);
 	if (err)
 		return ERR_PTR(err);
 
@@ -540,6 +543,7 @@ int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 	}
 
 	err = ovl_verify_origin_fh(upper, fh);
+	dput(upper);
 	if (err)
 		goto fail;
 
@@ -550,7 +554,6 @@ int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 
 out:
 	dput(origin.dentry);
-	dput(upper);
 	kfree(fh);
 	return err;
 
