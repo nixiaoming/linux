@@ -579,3 +579,97 @@ err:
 	pr_err("overlayfs: failed to lock workdir+upperdir\n");
 	return -EIO;
 }
+
+#define OVL_ROCOMPAT_FEATURES_NAME "rocompat_features"
+
+static const char *ovl_rocompat_features[] = {
+	OVL_FEATURE_ROCOMPAT_INDEX,
+	NULL,
+};
+
+bool ovl_is_features_dir(struct dentry *dentry, const char ***features)
+{
+	if (!dentry || !d_is_dir(dentry))
+		return false;
+
+	if (strcmp(dentry->d_name.name, OVL_ROCOMPAT_FEATURES_NAME))
+		return false;
+
+	if (features)
+		*features = ovl_rocompat_features;
+	return true;
+}
+
+bool ovl_is_feature_supported(const char *name, const char **features)
+{
+	const char **p;
+
+	for (p = features; *p; p++) {
+		if (!strcmp(name, *p))
+			return true;
+	}
+	return false;
+}
+
+/* Create object if it doesn't exist */
+struct dentry *ovl_test_create(struct dentry *parent, const char *name,
+			       umode_t mode)
+{
+	struct inode *dir = parent->d_inode;
+	struct dentry *dentry;
+	int err;
+
+	inode_lock_nested(dir, I_MUTEX_PARENT);
+
+	dentry = lookup_one_len(name, parent, strlen(name));
+	err = PTR_ERR(dentry);
+	if (IS_ERR(dentry))
+		return dentry;
+
+	if (!dentry->d_inode) {
+		err = ovl_create_real(dir, dentry,
+				      &(struct cattr){.mode = mode},
+				      NULL, true);
+	} else if ((mode ^ d_inode(dentry)->i_mode) & S_IFMT) {
+		/* File exists but with wrong file type */
+		err = -EEXIST;
+	} else {
+		err = 0;
+	}
+
+	inode_unlock(dir);
+
+	if (err) {
+		dput(dentry);
+		return ERR_PTR(err);
+	}
+
+	return dentry;
+}
+
+int ovl_enable_rocompat_feature(struct dentry *workdir, const char *name)
+{
+	struct dentry *features, *feature, *enabled;
+	int err;
+
+	features = ovl_test_create(workdir, OVL_ROCOMPAT_FEATURES_NAME,
+				   S_IFDIR | 0);
+	err = PTR_ERR(features);
+	if (IS_ERR(features))
+		return err;
+
+	feature = ovl_test_create(features, name, S_IFDIR | 0);
+	dput(features);
+	err = PTR_ERR(feature);
+	if (IS_ERR(feature))
+		return err;
+
+	enabled = ovl_test_create(feature, "enabled", S_IFREG | 0);
+	dput(feature);
+	err = PTR_ERR(enabled);
+	if (IS_ERR(enabled))
+		return err;
+
+	dput(enabled);
+	return 0;
+}

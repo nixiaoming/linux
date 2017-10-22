@@ -1094,6 +1094,13 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		}
 		if (err)
 			goto out_put_indexdir;
+
+		/*
+		 * Prevent old kernel from mounting this overlay read-write and
+		 * corrupting the index.
+		 */
+		err = ovl_enable_rocompat_feature(ufs->workdir,
+						  OVL_FEATURE_ROCOMPAT_INDEX);
 	}
 
 	/* Show index=off/on in /proc/mounts for any of the reasons above */

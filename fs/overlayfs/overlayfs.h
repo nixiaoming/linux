@@ -27,10 +27,13 @@ enum ovl_path_type {
 #define OVL_XATTR_IMPURE OVL_XATTR_PREFIX "impure"
 #define OVL_XATTR_NLINK OVL_XATTR_PREFIX "nlink"
 
+#define OVL_FEATURE_ROCOMPAT_INDEX "index"
+
 enum ovl_flag {
 	OVL_IMPURE,
 	OVL_INDEX,
 };
+
 
 /*
  * The tuple (fh,uuid) is a universal unique identifier for a copy up origin,
@@ -242,6 +245,9 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 	return ovl_check_dir_xattr(dentry, OVL_XATTR_IMPURE);
 }
 
+bool ovl_is_features_dir(struct dentry *dentry, const char ***features);
+bool ovl_is_feature_supported(const char *name, const char **features);
+int ovl_enable_rocompat_feature(struct dentry *dentry, const char *name);
 
 /* namei.c */
 int ovl_verify_origin(struct dentry *dentry, struct vfsmount *mnt,
