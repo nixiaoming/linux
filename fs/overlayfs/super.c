@@ -1084,8 +1084,14 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 							   ufs->upper_mnt,
 							   stack, numlower);
 		}
-		if (err || !ufs->indexdir)
+		if (err || !ufs->indexdir) {
+			if (err == -EROFS) {
+				pr_warn("overlayfs: unsupported index features; mounting read-only to avoid corrupting inodes index.\n");
+				sb->s_flags |= MS_RDONLY;
+				err = 0;
+			}
 			pr_warn("overlayfs: try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");
+		}
 		if (err)
 			goto out_put_indexdir;
 	}
