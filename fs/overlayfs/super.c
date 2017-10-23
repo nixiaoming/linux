@@ -488,7 +488,7 @@ retry:
 				goto out_unlock;
 
 			retried = true;
-			ovl_workdir_cleanup(dir, mnt, work, 0);
+			ovl_workdir_cleanup(dir, mnt, work, 0, NULL);
 			dput(work);
 			goto retry;
 		}

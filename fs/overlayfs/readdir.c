@@ -922,7 +922,8 @@ int ovl_check_d_type_supported(struct path *realpath)
 	return rdd.d_type_supported;
 }
 
-static void ovl_workdir_cleanup_recurse(struct path *path, int level)
+static void ovl_workdir_cleanup_recurse(struct path *path, int level,
+					const char **features)
 {
 	int err;
 	struct inode *dir = path->dentry->d_inode;
@@ -955,7 +956,8 @@ static void ovl_workdir_cleanup_recurse(struct path *path, int level)
 		if (IS_ERR(dentry))
 			continue;
 		if (dentry->d_inode)
-			ovl_workdir_cleanup(dir, path->mnt, dentry, level);
+			ovl_workdir_cleanup(dir, path->mnt, dentry, level,
+					    features);
 		dput(dentry);
 	}
 	inode_unlock(dir);
@@ -964,11 +966,33 @@ out:
 }
 
 void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
-			 struct dentry *dentry, int level)
+			 struct dentry *dentry, int level,
+			 const char **features)
 {
 	int err;
 
-	if (!d_is_dir(dentry) || level > 1) {
+	/*
+	 * The features directories are treated specially:
+	 * Recursive cleanup iterates 2 levels inside features dir.
+	 * Iteration inside features dir cleans up only directories of
+	 * supported feature names.
+	 * By skipping cleanup of unsupported feature names, remove of
+	 * the features dir will fail followed by failure to remove
+	 * "work" dir and resulting in read-only mount.
+	 * This is a hack to force read-only mount with older kernels that
+	 * do not know about features, but only iterate recursively 2 levels
+	 * inside "work" dir.
+	 */
+	if (!features && d_is_dir(dentry) && level == 1 &&
+	    ovl_is_features_dir(dentry, &features)) {
+		level = 0;
+	} else if (features && d_is_dir(dentry) &&
+		   !ovl_is_feature_supported(dentry->d_name.name, features)) {
+		/* Skip cleanup of unsupported feature names */
+		pr_warn("overlayfs: feature '%s' not supported\n",
+			dentry->d_name.name);
+		return;
+	} else if (!d_is_dir(dentry) || level > 1) {
 		ovl_cleanup(dir, dentry);
 		return;
 	}
@@ -978,7 +1002,7 @@ void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
 		struct path path = { .mnt = mnt, .dentry = dentry };
 
 		inode_unlock(dir);
-		ovl_workdir_cleanup_recurse(&path, level + 1);
+		ovl_workdir_cleanup_recurse(&path, level + 1, features);
 		inode_lock_nested(dir, I_MUTEX_PARENT);
 		ovl_cleanup(dir, dentry);
 	}
