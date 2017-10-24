@@ -1179,7 +1179,7 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			goto next;
 		}
 
-		err = ovl_verify_index(index, lower, numlower);
+		err = ovl_verify_index(index, mnt, lower, numlower);
 		/* Cleanup stale and orphan index entries */
 		if (err && (err == -ESTALE || err == -ENOENT))
 			err = ovl_cleanup(dir, index);

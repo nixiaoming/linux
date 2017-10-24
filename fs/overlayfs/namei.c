@@ -430,35 +430,48 @@ fail:
 	goto out;
 }
 
+/* Get upper dentry from index */
+struct dentry *ovl_index_upper(struct dentry *index, struct vfsmount *mnt)
+{
+	struct ovl_fh *fh;
+	struct ovl_path upper = {.layer = &(struct ovl_layer){.mnt = mnt}};
+	struct ovl_path *stack = &upper;
+	int err;
+
+	if (!d_is_dir(index))
+		return dget(index);
+
+	fh = ovl_get_origin_fh(index);
+	if (IS_ERR_OR_NULL(fh))
+		return ERR_CAST(fh);
+
+	err = ovl_check_origin_fh(fh, index, stack, 1, &stack);
+	kfree(fh);
+	if (err)
+		return ERR_PTR(err);
+
+	return upper.dentry;
+}
+
 /*
  * Verify that an index entry name matches the origin file handle stored in
  * OVL_XATTR_ORIGIN and that origin file handle can be decoded to lower path.
  * Return 0 on match, -ESTALE on mismatch or stale origin, < 0 on error.
  */
-int ovl_verify_index(struct dentry *index, struct ovl_path *lower,
-		     unsigned int numlower)
+int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
+		     struct ovl_path *lower, unsigned int numlower)
 {
 	struct ovl_fh *fh = NULL;
 	size_t len;
 	struct ovl_path origin = { };
 	struct ovl_path *stack = &origin;
+	struct dentry *upper = NULL;
 	int err;
 
 	if (!d_inode(index))
 		return 0;
 
-	/*
-	 * Directory index entries are going to be used for looking up
-	 * redirected upper dirs by lower dir fh when decoding an overlay
-	 * file handle of a merge dir.  We don't know the verification rules
-	 * for directory index entries, because they have not been implemented
-	 * yet, so return EINVAL if those entries are found to abort the mount
-	 * and to avoid corrupting an index that was created by a newer kernel.
-	 */
 	err = -EINVAL;
-	if (d_is_dir(index))
-		goto fail;
-
 	if (index->d_name.len < sizeof(struct ovl_fh)*2)
 		goto fail;
 
@@ -489,17 +502,32 @@ int ovl_verify_index(struct dentry *index, struct ovl_path *lower,
 	if (ovl_is_whiteout(index))
 		goto out;
 
-	err = ovl_verify_origin_fh(index, fh);
+	/*
+	 * Directory index entries should have origin xattr pointing to the
+	 * real upper dir. Non-dir index entries are hardlinks to the upper
+	 * real inode. For non-dir index, we can read the copy up origin xattr
+	 * directly from the index dentry, but for dir index we first need to
+	 * decode the upper directory.
+	 */
+	upper = ovl_index_upper(index, mnt);
+	if (IS_ERR(upper)) {
+		err = PTR_ERR(upper);
+		if (err)
+			goto fail;
+	}
+
+	err = ovl_verify_origin_fh(upper, fh);
+	dput(upper);
 	if (err)
 		goto fail;
 
 	/* Check if index is orphan and don't warn before cleaning it */
-	if (d_inode(index)->i_nlink == 1 &&
+	if (!d_is_dir(index) && d_inode(index)->i_nlink == 1 &&
 	    ovl_get_nlink(index, origin.dentry, 0) == 0)
 		err = -ENOENT;
 
-	dput(origin.dentry);
 out:
+	dput(origin.dentry);
 	kfree(fh);
 	return err;
 
