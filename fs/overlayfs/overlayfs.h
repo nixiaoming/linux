@@ -354,6 +354,8 @@ extern const struct inode_operations ovl_dir_inode_operations;
 int ovl_cleanup(struct inode *dir, struct dentry *dentry);
 int ovl_cleanup_path(struct path *path, const char *name);
 struct dentry *ovl_lookup_temp(struct dentry *workdir);
+int ovl_cleanup_and_whiteout(struct dentry *workdir, struct inode *dir,
+			     struct dentry *dentry);
 struct cattr {
 	dev_t rdev;
 	umode_t mode;
