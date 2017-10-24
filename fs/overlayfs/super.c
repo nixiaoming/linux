@@ -1076,9 +1076,7 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 
 			/* Cleanup bad/stale/orphan index entries */
 			if (!err)
-				err = ovl_indexdir_cleanup(ofs->indexdir,
-							   ofs->upper_mnt,
-							   oe->lowerstack,
+				err = ovl_indexdir_cleanup(ofs, oe->lowerstack,
 							   oe->numlower);
 			if (err == -EROFS) {
 				pr_warn("overlayfs: unsupported index features; mounting read-only to avoid corrupting inodes index.\n");

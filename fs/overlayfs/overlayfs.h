@@ -313,8 +313,8 @@ int ovl_check_d_type_supported(struct path *realpath);
 void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
 			 struct dentry *dentry, int level,
 			 const char **features);
-int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
-			 struct ovl_path *lower, unsigned int numlower);
+int ovl_indexdir_cleanup(struct ovl_fs *ofs, struct ovl_path *lower,
+			 unsigned int numlower);
 
 /* inode.c */
 int ovl_set_nlink_upper(struct dentry *dentry);

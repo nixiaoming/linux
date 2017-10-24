@@ -1120,13 +1120,15 @@ int ovl_check_unsupported_feature(struct dentry *dentry, struct vfsmount *mnt,
 	return rdd.found;
 }
 
-int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
-			 struct ovl_path *lower, unsigned int numlower)
+int ovl_indexdir_cleanup(struct ovl_fs *ofs, struct ovl_path *lower,
+			 unsigned int numlower)
 {
 	int err;
+	struct dentry *indexdir = ofs->indexdir;
+	struct vfsmount *mnt = ofs->upper_mnt;
 	struct dentry *index = NULL;
-	struct inode *dir = dentry->d_inode;
-	struct path path = { .mnt = mnt, .dentry = dentry };
+	struct inode *dir = indexdir->d_inode;
+	struct path path = { .mnt = mnt, .dentry = indexdir };
 	LIST_HEAD(list);
 	struct rb_root root = RB_ROOT;
 	struct ovl_cache_entry *p;
@@ -1153,7 +1155,7 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			if (p->len == 2 && p->name[1] == '.')
 				continue;
 		}
-		index = lookup_one_len(p->name, dentry, p->len);
+		index = lookup_one_len(p->name, indexdir, p->len);
 		if (IS_ERR(index)) {
 			err = PTR_ERR(index);
 			index = NULL;
@@ -1180,9 +1182,29 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 		}
 
 		err = ovl_verify_index(index, mnt, lower, numlower);
-		/* Cleanup stale and orphan index entries */
-		if (err && (err == -ESTALE || err == -ENOENT))
+		if (!err) {
+			goto next;
+		} else if (err == -ESTALE) {
+			/* Cleanup stale index entries */
 			err = ovl_cleanup(dir, index);
+		} else if (err != -ENOENT) {
+			/*
+			 * Abort mount to avoid corrupting the index if
+			 * an incompatible index entry was found or on out
+			 * of memory.
+			 */
+			break;
+		} else if (ofs->config.index == OVL_INDEX_ALL) {
+			/*
+			 * Whiteout orphan index to block future open by
+			 * handle after overlay nlink dropepd to zero.
+			 */
+			err = ovl_cleanup_and_whiteout(indexdir, dir, index);
+		} else {
+			/* Cleanup orphan index entries */
+			err = ovl_cleanup(dir, index);
+		}
+
 		if (err)
 			break;
 
