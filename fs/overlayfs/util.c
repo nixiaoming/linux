@@ -67,6 +67,17 @@ int ovl_xino_bits(struct super_block *sb)
  */
 int ovl_can_decode_fh(struct super_block *sb)
 {
+	/* We don't need uuid to encode/decode nested overlay file handles */
+	if (sb->s_type == &ovl_fs_type) {
+		if (!sb->s_export_op || !sb->s_export_op->fh_to_dentry)
+			return 0;
+
+		sb = ovl_same_sb(sb);
+		if (!sb)
+			return 0;
+		/* Fall through to check nested overlay 32bit inodes */
+	}
+
 	if (!sb->s_export_op || !sb->s_export_op->fh_to_dentry ||
 	    uuid_is_null(&sb->s_uuid))
 		return 0;

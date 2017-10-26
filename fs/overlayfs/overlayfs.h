@@ -71,9 +71,11 @@ enum ovl_index {
 #define OVL_FH_FLAG_ANY_ENDIAN	(1 << 1)
 /* Is the real inode encoded in fid an upper inode? */
 #define OVL_FH_FLAG_PATH_UPPER	(1 << 2)
+/* File handle from nested overlayfs (only on wire) */
+#define OVL_FH_FLAG_PATH_NESTED	(1 << 3)
 
 #define OVL_FH_FLAG_ALL (OVL_FH_FLAG_BIG_ENDIAN | OVL_FH_FLAG_ANY_ENDIAN | \
-			 OVL_FH_FLAG_PATH_UPPER)
+			 OVL_FH_FLAG_PATH_UPPER | OVL_FH_FLAG_PATH_NESTED)
 
 #if defined(__LITTLE_ENDIAN)
 #define OVL_FH_FLAG_CPU_ENDIAN 0
@@ -398,3 +400,6 @@ struct ovl_fh *ovl_encode_fh(struct dentry *dentry, bool is_upper,
 
 /* export.c */
 extern const struct export_operations ovl_export_operations;
+
+/* super.c */
+extern struct file_system_type ovl_fs_type;

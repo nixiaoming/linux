@@ -79,6 +79,14 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	 * origin inode. For root dir and pure upper, encode the upper inode.
 	 */
 	fh = ovl_encode_fh(origin ?: upper, !origin, false);
+
+	/*
+	 * Set the nested flag on the if encoding file handle from nested lower
+	 * overlay. Nesting depth cannot be larger than 1, so one bit is enough.
+	 */
+	if (origin && origin->d_sb->s_type == &ovl_fs_type)
+		fh->flags |= OVL_FH_FLAG_PATH_NESTED;
+
 	if (fh->len > buflen) {
 		kfree(fh);
 		return -EOVERFLOW;
@@ -267,6 +275,7 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	struct ovl_fh *fh = (struct ovl_fh *) fid;
 	int len = fh_len << 2;
 	int err, i;
+	bool nested;
 
 	switch(fh_type) {
 		case OVL_FILEID_WITHOUT_PARENT:
@@ -292,7 +301,13 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 			return ERR_PTR(err);
 	}
 
-	if (fh->flags & OVL_FH_FLAG_PATH_UPPER) {
+	/*
+	 * Do not try to decode nested upper from upper_mnt.
+	 * Clear the 'nested' flag before decoding from lower overlayfs.
+	 */
+	nested = (fh->flags & OVL_FH_FLAG_PATH_NESTED);
+	fh->flags &= ~OVL_FH_FLAG_PATH_NESTED;
+	if (!nested && (fh->flags & OVL_FH_FLAG_PATH_UPPER)) {
 		if (!ofs->upper_mnt)
 			return NULL;
 
@@ -303,9 +318,18 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 		goto obtain_alias;
 	}
 
-	/* Find lower layer by UUID and decode */
+	/*
+	 * Find lower layer by UUID and decode. Find nested file handle in
+	 * nested lower overlayfs. Nested overlay will match UUID to its own
+	 * lower/upper layers.
+	 */
 	for (i = 0; i < ofs->numlower; i++) {
-		origin = ovl_decode_fh(fh, ofs->lower_layers[i].mnt);
+		struct vfsmount *mnt = ofs->lower_layers[i].mnt;
+
+		if (nested && mnt->mnt_sb->s_type != &ovl_fs_type)
+			continue;
+
+		origin = ovl_decode_fh(fh, mnt);
 		if (origin)
 			break;
 	}
