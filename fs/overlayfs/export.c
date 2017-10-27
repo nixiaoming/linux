@@ -21,8 +21,8 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct dentry *upper = ovl_dentry_upper(dentry);
-	struct ovl_fh *fh;
-	int len;
+	struct ovl_fh *fh = NULL;
+	int err;
 
 	/*
 	 * Overlay root dir inode is hashed and encoded as pure upper, because
@@ -44,8 +44,9 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	 *       with same path as decoded lower, while looking for indexed
 	 *       renamed parent directories along the path.
 	 */
+	err = -EIO;
 	if (upper && origin && !ovl_test_flag(OVL_INDEX, d_inode(dentry)))
-		return -EIO;
+		goto fail;
 
 	/*
 	 * Copy up directory on encode to create an index. We need the index
@@ -57,17 +58,15 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	 *       walk back upper parrent chain.
 	 */
 	if (d_is_dir(dentry) && !upper) {
-		int err;
-
 		err = ovl_want_write(dentry);
 		if (err)
-			return err;
+			goto fail;
 
 		err = ovl_copy_up(dentry);
 
 		ovl_drop_write(dentry);
 		if (err)
-			return err;
+			goto fail;
 
 		upper = ovl_dentry_upper(dentry);
 	}
@@ -87,16 +86,22 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	if (origin && origin->d_sb->s_type == &ovl_fs_type)
 		fh->flags |= OVL_FH_FLAG_PATH_NESTED;
 
-	if (fh->len > buflen) {
-		kfree(fh);
-		return -EOVERFLOW;
-	}
+	err = -EOVERFLOW;
+	if (fh->len > buflen)
+		goto fail;
 
 	memcpy(buf, (char *)fh, fh->len);
-	len = fh->len;
-	kfree(fh);
+	err = fh->len;
 
-	return len;
+out:
+	kfree(fh);
+	return err;
+
+fail:
+	pr_warn_ratelimited("overlayfs: failed to encode file handle (%pd2, err=%i, buflen=%d, len=%d, type=%d)\n",
+			    dentry, err, buflen, fh ? (int)fh->len : 0,
+			    fh ? fh->type : 0);
+	goto out;
 }
 
 /* TODO: add export_operations method dentry_to_fh() ??? */
@@ -113,7 +118,7 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 
 	res = ovl_d_to_fh(dentry, p, rem);
 	if (res <= 0)
-		goto fail;
+		return FILEID_INVALID;
 
 	len = res;
 
@@ -125,7 +130,7 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 		res = ovl_d_to_fh(parent, p, rem);
 		dput(parent);
 		if (res <= 0)
-			goto fail;
+			return FILEID_INVALID;
 
 		len += res;
 		type = OVL_FILEID_WITH_PARENT;
@@ -134,11 +139,6 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 	/* Round up to dwords */
 	*max_len = (len + 3) >> 2;
 	return type;
-
-fail:
-	pr_warn_ratelimited("overlayfs: failed to encode file handle (%pd2, connectable=%d, res=%i, len=%d, rem=%d, max_len=%d)\n",
-			    dentry, connectable, res, len, rem, *max_len << 2);
-	return FILEID_INVALID;
 }
 
 /* Find an alias of inode. If @dir is non NULL, find a child alias */
@@ -278,20 +278,21 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	int err, i;
 	bool nested;
 
+	err = -EINVAL;
 	switch(fh_type) {
 		case OVL_FILEID_WITHOUT_PARENT:
 			if (to_parent)
-				return ERR_PTR(-EINVAL);
+				goto out_err;
 			break;
 		case OVL_FILEID_WITH_PARENT:
 			break;
 		default:
-			return ERR_PTR(-EINVAL);
+			goto out_err;
 	}
 
 	err = ovl_check_fh_len(fh, len);
 	if (err)
-		return ERR_PTR(err);
+		goto out_err;
 
 	if (to_parent) {
 		/* Seek to parent fh after child fh */
@@ -299,7 +300,7 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 		fh = ((void *) fid) + fh->len;
 		err = ovl_check_fh_len(fh, len);
 		if (err)
-			return ERR_PTR(err);
+			goto out_err;
 	}
 
 	/*
@@ -309,12 +310,17 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	nested = (fh->flags & OVL_FH_FLAG_PATH_NESTED);
 	fh->flags &= ~OVL_FH_FLAG_PATH_NESTED;
 	if (!nested && (fh->flags & OVL_FH_FLAG_PATH_UPPER)) {
+		err = -ENOENT;
 		if (!ofs->upper_mnt)
-			return NULL;
+			goto out_err;
 
 		upper = ovl_decode_fh(fh, ofs->upper_mnt);
-		if (IS_ERR_OR_NULL(upper))
-			return upper;
+		if (IS_ERR_OR_NULL(upper)) {
+			err = PTR_ERR(upper);
+			if (err && err != -ESTALE)
+				goto out_err;
+			goto notfound;
+		}
 
 		goto obtain_alias;
 	}
@@ -335,8 +341,12 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 			break;
 	}
 
-	if (IS_ERR_OR_NULL(origin))
-		return origin;
+	if (IS_ERR_OR_NULL(origin)) {
+		err = PTR_ERR(origin);
+		if (err && err != -ESTALE)
+			goto out_err;
+		goto notfound;
+	}
 
 	/* Lookup overlay inode in inode cache by decoded origin inode */
 	inode = ovl_lookup_inode(sb, origin);
@@ -349,9 +359,12 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	/* Lookup index by decoded origin */
 	index = ovl_lookup_index(ofs->indexdir, NULL, origin);
 	if (IS_ERR(index)) {
-		dput(origin);
-		return index;
+		err = PTR_ERR(index);
+		if (err && err != -ESTALE)
+			goto out_err;
+		goto notfound;
 	}
+
 	if (index) {
 		/* Get upper dentry from index */
 		upper = ovl_index_upper(index, ofs->upper_mnt);
@@ -368,11 +381,19 @@ obtain_alias:
 	dentry = ovl_obtain_alias(sb, upper, origin);
 
 out:
-	dput(index);
-	dput(origin);
+	if (!IS_ERR(index))
+		dput(index);
+	if (!IS_ERR(origin))
+		dput(origin);
 	return dentry;
 
 out_err:
+	pr_warn_ratelimited("overlayfs: failed to decode file handle (len=%d, type=%d, err=%i, u/i/o=%ld/%ld/%ld)\n",
+			    len, fh_type, err,
+			    IS_ERR(upper) ? PTR_ERR(upper) : !!upper,
+			    IS_ERR(index) ? PTR_ERR(index) : !!index,
+			    IS_ERR(origin) ? PTR_ERR(origin) : !!origin);
+notfound:
 	dentry = ERR_PTR(err);
 	goto out;
 }
@@ -396,6 +417,7 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 	struct dentry *parent;
 	struct dentry *upper;
 	struct dentry *origin = NULL;
+	struct dentry *index = NULL;
 	struct ovl_path *stack = NULL;
 	unsigned int ctr = 0;
 	int err;
@@ -411,8 +433,9 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 	 * TODO: handle reconnecting of non upper overlay dentry.
 	 */
 	upper = ovl_dentry_upper(dentry);
+	err = -EIO;
 	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
-		return ERR_PTR(-ESTALE);
+		goto out_err;
 
 	upper = dget_parent(upper);
 	if (upper == ovl_dentry_upper(root)) {
@@ -427,8 +450,6 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 		goto out_err;
 
 	if (ctr) {
-		struct dentry *index;
-
 		/*
 		 * Lookup index by decoded origin to verify dir is indexed.
 		 * We only decode upper with origin if it is indexed, so NFS
@@ -438,22 +459,28 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 		origin = stack[0].dentry;
 		index = ovl_lookup_index(ovl_indexdir(dentry->d_sb), upper,
 					 origin);
-		err = index ? PTR_ERR(index) : -ESTALE;
+		err = index ? PTR_ERR(index) : -ENOENT;
 		if (IS_ERR_OR_NULL(index))
 			goto out_err;
-
-		dput(index);
 	}
 
 	/* Find or instantiate an upper dentry */
 	parent = ovl_obtain_alias(dentry->d_sb, upper, origin);
 
 out:
-	dput(origin);
+	if (!IS_ERR(index))
+		dput(index);
+	if (!IS_ERR(origin))
+		dput(origin);
 	kfree(stack);
 	return parent;
 
 out_err:
+	pr_warn_ratelimited("overlayfs: failed to decode parent (%pd2, err=%i, u/i/o=%ld/%ld/%ld)\n",
+			    dentry, err,
+			    IS_ERR(upper) ? PTR_ERR(upper) : !!upper,
+			    IS_ERR(index) ? PTR_ERR(index) : !!index,
+			    IS_ERR(origin) ? PTR_ERR(origin) : !!origin);
 	dput(upper);
 	parent = ERR_PTR(err);
 	goto out;
