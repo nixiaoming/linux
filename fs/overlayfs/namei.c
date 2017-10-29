@@ -187,9 +187,10 @@ invalid:
 
 struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
 {
-	struct dentry *origin;
+	struct dentry *origin = NULL;
 	int bytes, type;
 	void *fid;
+	int err = -EINVAL;
 
 	/*
 	 * Make sure that the stored uuid matches the uuid of the lower
@@ -206,12 +207,13 @@ struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
 		type = fh->type;
 		bytes = (fh->len - offsetof(struct ovl_fh, fid));
 	} else {
-		return NULL;
+		goto fail;
 	}
 
 	origin = exportfs_decode_fh(mnt, fid, (bytes + 3) >> 2, type,
 				    ovl_acceptable, mnt);
-	if (IS_ERR(origin)) {
+	err = -ESTALE;
+	if (IS_ERR_OR_NULL(origin)) {
 		/*
 		 * Treat stale file handle to lower file as "origin unknown".
 		 * upper file handle could become stale when upper file is
@@ -221,14 +223,21 @@ struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
 		if (origin == ERR_PTR(-ESTALE) &&
 		    !(fh->flags & OVL_FH_FLAG_PATH_UPPER))
 			origin = NULL;
-		return origin;
+		goto fail;
 	}
 
+	err = -EIO;
 	if (ovl_dentry_weird(origin)) {
 		dput(origin);
-		return NULL;
+		origin = NULL;
+		goto fail;
 	}
 
+	return origin;
+
+fail:
+	pr_warn_ratelimited("overlayfs: failed to decode fh (len=%d, type=%d, err=%i, nested=%d)\n",
+			    bytes, type, err, mnt->mnt_sb->s_type == &ovl_fs_type);
 	return origin;
 }
 
