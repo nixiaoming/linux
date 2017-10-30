@@ -17,7 +17,8 @@
 #include <linux/sched.h>
 #include <linux/cred.h>
 
-#define dprintk(fmt, args...) do{}while(0)
+//#define dprintk(fmt, args...) do{}while(0)
+#define dprintk pr_warn
 
 
 static int get_name(const struct path *path, char *name, struct dentry *child);
@@ -121,7 +122,7 @@ static struct dentry *reconnect_one(struct vfsmount *mnt,
 		struct dentry *dentry, char *nbuf)
 {
 	struct dentry *parent;
-	struct dentry *tmp;
+	struct dentry *tmp = NULL;
 	int err;
 
 	parent = ERR_PTR(-EACCES);
@@ -136,7 +137,7 @@ static struct dentry *reconnect_one(struct vfsmount *mnt,
 		return parent;
 	}
 
-	dprintk("%s: find name of %lu in %lu\n", __func__,
+	dprintk("%s[%d]: find name of %lu in %lu\n", __func__, dentry->d_sb->s_stack_depth,
 		dentry->d_inode->i_ino, parent->d_inode->i_ino);
 	err = exportfs_get_name(mnt, parent, nbuf, dentry);
 	if (err == -ENOENT)
@@ -145,6 +146,7 @@ static struct dentry *reconnect_one(struct vfsmount *mnt,
 		goto out_err;
 	dprintk("%s: found name: %s\n", __func__, nbuf);
 	tmp = lookup_one_len_unlocked(nbuf, parent, strlen(nbuf));
+	err = PTR_ERR(tmp);
 	if (IS_ERR(tmp)) {
 		dprintk("%s: lookup failed: %d\n", __func__, PTR_ERR(tmp));
 		goto out_err;
@@ -156,7 +158,7 @@ static struct dentry *reconnect_one(struct vfsmount *mnt,
 		 * got looked up and thus connected, and it would
 		 * remain connected afterwards.  We are done.
 		 */
-		dput(tmp);
+		err = -EEXIST;
 		goto out_reconnected;
 	}
 	dput(tmp);
@@ -167,10 +169,11 @@ static struct dentry *reconnect_one(struct vfsmount *mnt,
 	return parent;
 
 out_err:
+	pr_warn("%s: failed to reconnect (%pd2, err=%i, parent=%pd2)\n",
+		__func__, dentry, err, parent);
 	dput(parent);
 	return ERR_PTR(err);
 out_reconnected:
-	dput(parent);
 	/*
 	 * Someone must have renamed our entry into another parent, in
 	 * which case it has been reconnected by the rename.
@@ -184,6 +187,10 @@ out_reconnected:
 	 * actually contain any entry pointing to this inode.  So,
 	 * double check that this worked and return -ESTALE if not:
 	 */
+	pr_warn("%s: failed to reconnect (%pd2, err=%i, parent=%pd2, connected=%d)\n",
+		__func__, dentry, err, parent, dentry_connected(dentry));
+	dput(parent);
+	dput(tmp);
 	if (!dentry_connected(dentry))
 		return ERR_PTR(-ESTALE);
 	return NULL;
