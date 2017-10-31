@@ -272,6 +272,7 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	struct dentry *index = NULL;
 	struct dentry *origin = NULL;
 	struct dentry *dentry = NULL;
+	struct inode *inode;
 	struct ovl_fh *fh = (struct ovl_fh *) fid;
 	int len = fh_len << 2;
 	int err, i;
@@ -336,6 +337,14 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 
 	if (IS_ERR_OR_NULL(origin))
 		return origin;
+
+	/* Lookup overlay inode in inode cache by decoded origin inode */
+	inode = ovl_lookup_inode(sb, origin);
+	if (inode) {
+		upper = dget(ovl_i_dentry_upper(inode));
+		iput(inode);
+		goto obtain_alias;
+	}
 
 	/* Lookup index by decoded origin */
 	index = ovl_lookup_index(ofs->indexdir, NULL, origin);
