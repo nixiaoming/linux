@@ -15,7 +15,7 @@ struct ovl_config {
 	bool default_permissions;
 	bool redirect_dir;
 	bool verify_dir;
-	bool index;
+	int index;
 	bool xino;
 };
 

@@ -484,13 +484,17 @@ void ovl_inuse_unlock(struct dentry *dentry)
  */
 bool ovl_need_index(struct dentry *dentry)
 {
+	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
 	struct dentry *lower = ovl_dentry_lower(dentry);
 
-	if (!lower)
+	if (!lower || !ofs->indexdir)
 		return false;
 
+	if (!d_is_dir(lower) && ofs->config.index == OVL_INDEX_ALL)
+		return true;
+
 	/* Index only lower hardlinks on copy up */
-	if (ovl_indexdir(dentry->d_sb) &&
+	if ((ofs->config.index == OVL_INDEX_NLINK) &&
 	    !d_is_dir(lower) && d_inode(lower)->i_nlink > 1)
 		return true;
 
@@ -654,6 +658,9 @@ static const char * const ovl_incompat_features[] = {
 };
 
 static const char * const ovl_rocompat_features[] = {
+#ifdef CONFIG_OVERLAY_FS_INDEX_INCOMPAT
+	OVL_FEATURE_ROCOMPAT_INDEX_ALL,
+#endif
 	NULL,
 };
 

@@ -322,7 +322,8 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 			   ofs->config.redirect_dir ? "on" : "off");
 	if (ofs->config.index != ovl_index_def)
 		seq_printf(m, ",index=%s",
-			   ofs->config.index ? "on" : "off");
+			   ofs->config.index == OVL_INDEX_ALL ? "all" :
+			   (ofs->config.index ? "on" : "off"));
 	if (ofs->config.xino)
 		seq_puts(m, ",xino");
 	if (ofs->config.verify_dir)
@@ -360,6 +361,7 @@ enum {
 	OPT_REDIRECT_DIR_OFF,
 	OPT_INDEX_ON,
 	OPT_INDEX_OFF,
+	OPT_INDEX_ALL,
 	OPT_XINO,
 	OPT_VERIFY_DIR,
 	OPT_ERR,
@@ -374,6 +376,9 @@ static const match_table_t ovl_tokens = {
 	{OPT_REDIRECT_DIR_OFF,		"redirect_dir=off"},
 	{OPT_INDEX_ON,			"index=on"},
 	{OPT_INDEX_OFF,			"index=off"},
+#ifdef CONFIG_OVERLAY_FS_INDEX_INCOMPAT
+	{OPT_INDEX_ALL,			"index=all"},
+#endif
 	{OPT_XINO,			"xino"},
 	{OPT_VERIFY_DIR,		"verify_dir"},
 	{OPT_ERR,			NULL}
@@ -449,11 +454,15 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			break;
 
 		case OPT_INDEX_ON:
-			config->index = true;
+			config->index = OVL_INDEX_NLINK;
 			break;
 
 		case OPT_INDEX_OFF:
-			config->index = false;
+			config->index = 0;
+			break;
+
+		case OPT_INDEX_ALL:
+			config->index = OVL_INDEX_ALL;
 			break;
 
 		case OPT_XINO:
@@ -691,7 +700,7 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	fh_type = ovl_can_decode_fh(path->dentry->d_sb);
 	if (!fh_type && ofs->config.upperdir &&
 	    (ofs->config.index || ofs->config.verify_dir)) {
-		ofs->config.index = false;
+		ofs->config.index = 0;
 		ofs->config.verify_dir = false;
 		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off and no verify_dir.\n",
 			name);
@@ -915,7 +924,7 @@ static int ovl_get_upper(struct ovl_fs *ofs, struct path *upperpath)
 	/* Check if upper fs supports file handles */
 	fh_type = ovl_can_decode_fh(upper_mnt->mnt_sb);
 	if (ofs->config.index && !fh_type) {
-		ofs->config.index = false;
+		ofs->config.index = 0;
 		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
 	}
 	/* Check if upper fs has 32bit inode numbers */
@@ -970,8 +979,8 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	err = ovl_do_setxattr(ofs->workdir, OVL_XATTR_OPAQUE, "0", 1, 0);
 	if (err) {
 		ofs->noxattr = true;
+		ofs->config.index = 0;
 		ofs->config.redirect_dir = false;
-		ofs->config.index = false;
 		ofs->config.verify_dir = false;
 		pr_warn("overlayfs: upper fs does not support xattr, falling back to redirect_dir=off, index=off, no verify_dir and no opaque dir.\n");
 	} else {
@@ -981,7 +990,7 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	/* Check if upper/work fs supports file handles */
 	if (ofs->config.index &&
 	    !ovl_can_decode_fh(ofs->workdir->d_sb)) {
-		ofs->config.index = false;
+		ofs->config.index = 0;
 		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
 	}
 
@@ -1111,7 +1120,7 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 
 	/* No index dir with index=on leads to read-only mount */
 	if (ofs->config.index && !ofs->indexdir) {
-		ofs->config.index = false;
+		ofs->config.index = 0;
 		if (!err)
 			err = -EROFS;
 	}
@@ -1272,7 +1281,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_err;
 
 	ofs->config.redirect_dir = ovl_redirect_dir_def;
-	ofs->config.index = ovl_index_def;
+	ofs->config.index = (enum ovl_index) ovl_index_def;
 	err = ovl_parse_opt((char *) data, &ofs->config);
 	if (err)
 		goto out_err;
