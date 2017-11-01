@@ -9,6 +9,7 @@
 
 #include <linux/fs.h>
 #include <linux/cred.h>
+#include <linux/ctype.h>
 #include <linux/namei.h>
 #include <linux/xattr.h>
 #include <linux/ratelimit.h>
@@ -454,6 +455,24 @@ static struct dentry *ovl_index_upper(struct ovl_fs *ofs, struct dentry *index)
 	return upper.dentry;
 }
 
+/* Is this a leftover from create/whiteout of directory index entry? */
+static bool ovl_is_temp_index(struct dentry *index)
+{
+	const char *p = index->d_name.name;
+	int len = index->d_name.len;
+
+	if (!d_is_dir(index) && !ovl_is_whiteout(index))
+		return false;
+
+	if (*p++ != '#' || len < 2)
+		return false;
+
+	while (--len > 0 && isdigit(*p))
+		p++;
+
+	return !len;
+}
+
 /*
  * Verify that an index entry name matches the origin file handle stored in
  * OVL_XATTR_ORIGIN and that origin file handle can be decoded to lower path.
@@ -470,6 +489,11 @@ int ovl_verify_index(struct ovl_fs *ofs, struct dentry *index)
 
 	if (!d_inode(index))
 		return 0;
+
+	/* Cleanup leftover from index create/cleanup attempt */
+	err = -ESTALE;
+	if (ovl_is_temp_index(index))
+		goto fail;
 
 	err = -EINVAL;
 	if (index->d_name.len < sizeof(struct ovl_fh)*2)
