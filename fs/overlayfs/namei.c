@@ -87,6 +87,8 @@ static int ovl_acceptable(void *ctx, struct dentry *dentry)
 	return 1;
 }
 
+static struct ovl_fh ovl_null_fh;
+
 static struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry)
 {
 	int res;
@@ -100,7 +102,7 @@ static struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry)
 	}
 	/* Zero size value means "copied up but origin unknown" */
 	if (res == 0)
-		return NULL;
+		goto null_fh;
 
 	fh  = kzalloc(res, GFP_KERNEL);
 	if (!fh)
@@ -118,18 +120,22 @@ static struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry)
 
 	/* Treat larger version and unknown flags as "origin unknown" */
 	if (fh->version > OVL_FH_VERSION || fh->flags & ~OVL_FH_FLAG_ALL)
-		goto out;
+		goto null_fh;
 
 	/* Treat endianness mismatch as "origin unknown" */
 	if (!(fh->flags & OVL_FH_FLAG_ANY_ENDIAN) &&
 	    (fh->flags & OVL_FH_FLAG_BIG_ENDIAN) != OVL_FH_FLAG_CPU_ENDIAN)
-		goto out;
+		goto null_fh;
 
 	return fh;
 
 out:
 	kfree(fh);
 	return NULL;
+
+null_fh:
+	kfree(fh);
+	return &ovl_null_fh;
 
 fail:
 	pr_warn_ratelimited("overlayfs: failed to get origin (%i)\n", res);
@@ -148,6 +154,9 @@ static struct dentry *ovl_get_origin(struct dentry *dentry,
 
 	if (IS_ERR_OR_NULL(fh))
 		return (struct dentry *)fh;
+
+	if (fh == &ovl_null_fh)
+		return NULL;
 
 	/*
 	 * Make sure that the stored uuid matches the uuid of the lower
@@ -333,6 +342,10 @@ static int ovl_verify_origin_fh(struct dentry *dentry, const struct ovl_fh *fh)
 	if (IS_ERR(ofh))
 		return PTR_ERR(ofh);
 
+	/* 'null' fh (no lower fh support) and stored 'null' fh is a match */
+	if (ofh == &ovl_null_fh || fh == &ovl_null_fh)
+		return (fh == ofh) ? 0 : -ESTALE;
+
 	if (fh->len != ofh->len || memcmp(fh, ofh, fh->len))
 		err = -ESTALE;
 
@@ -345,24 +358,40 @@ static int ovl_verify_origin_fh(struct dentry *dentry, const struct ovl_fh *fh)
  *
  * If @set is true and there is no stored file handle, encode and store origin
  * file handle in OVL_XATTR_ORIGIN.
+ * If @strict is true, then the stored file handle must be non 'null'.
+ * If @strict is false, then a stored 'null' file handle and lower with no file
+ * handle support is considered a match.
  *
  * Return 0 on match, -ESTALE on mismatch, < 0 on error.
  */
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
-		      bool is_upper, bool set)
+		      bool is_upper, bool set, bool strict)
 {
 	struct inode *inode;
-	struct ovl_fh *fh;
+	const struct ovl_fh *fh = NULL;
 	int err;
 
-	fh = ovl_encode_fh(origin, is_upper);
-	err = PTR_ERR(fh);
-	if (IS_ERR(fh))
+	/*
+	 * When lower layer doesn't support export operations store a 'null' fh,
+	 * so we can use the overlay.origin xattr to distignuish between a copy
+	 * up and a pure upper inode.
+	 */
+	err = -EOPNOTSUPP;
+	if (ovl_can_decode_fh(origin->d_sb)) {
+		fh = ovl_encode_fh(origin, is_upper);
+		err = PTR_ERR(fh);
+		if (IS_ERR(fh))
+			goto fail;
+	} else if (strict) {
 		goto fail;
+	}
 
-	err = ovl_verify_origin_fh(dentry, fh);
-	if (set && err == -ENODATA)
-		err = ovl_do_setxattr(dentry, OVL_XATTR_ORIGIN, fh, fh->len, 0);
+	err = ovl_verify_origin_fh(dentry, fh ?: &ovl_null_fh);
+	if (set && err == -ENODATA) {
+		err = ovl_do_setxattr(dentry, OVL_XATTR_ORIGIN, fh,
+				      fh ? fh->len : 0, 0);
+	}
+
 	if (err)
 		goto fail;
 
@@ -673,6 +702,18 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 
 		if (!this)
 			continue;
+
+		/*
+		 * If no origin fh is stored in upper of a merge dir, store fh
+		 * of upper most lower dir or 'null' fh if lower does not
+		 * support file handles. We do this so we can filter out
+		 * whiteouts in case lower dir is removed offline and this upper
+		 * becomes a pure upper in a future mount.
+		 */
+		if (this && upperdentry && !ctr) {
+			(void)ovl_verify_origin(upperdentry, this,
+						false, true, false);
+		}
 
 		stack[ctr].dentry = this;
 		stack[ctr].layer = lower.layer;
