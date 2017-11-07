@@ -320,6 +320,8 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 	if (ofs->config.index != ovl_index_def)
 		seq_printf(m, ",index=%s",
 			   ofs->config.index ? "on" : "off");
+	if (ofs->config.xino)
+		seq_puts(m, ",xino");
 	return 0;
 }
 
@@ -353,6 +355,7 @@ enum {
 	OPT_REDIRECT_DIR_OFF,
 	OPT_INDEX_ON,
 	OPT_INDEX_OFF,
+	OPT_XINO,
 	OPT_ERR,
 };
 
@@ -365,6 +368,7 @@ static const match_table_t ovl_tokens = {
 	{OPT_REDIRECT_DIR_OFF,		"redirect_dir=off"},
 	{OPT_INDEX_ON,			"index=on"},
 	{OPT_INDEX_OFF,			"index=off"},
+	{OPT_XINO,			"xino"},
 	{OPT_ERR,			NULL}
 };
 
@@ -443,6 +447,10 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 
 		case OPT_INDEX_OFF:
 			config->index = false;
+			break;
+
+		case OPT_XINO:
+			config->xino = true;
 			break;
 
 		default:
@@ -1227,9 +1235,20 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	else if (ofs->upper_mnt->mnt_sb != ofs->same_sb)
 		ofs->same_sb = NULL;
 
-	/* When all layers on same fs, overlay can use real inode numbers */
-	if (ofs->same_sb)
+	/*
+	 * When all layers on same fs, overlay can use real inode numbers.
+	 * With mount option 'xino', mounter declares that there are enough
+	 * free high bits in underlying fs to hold the layer id.
+	 * If overlayfs does encounter underlying inodes using the high xino
+	 * bits reserved for layer id, stat(2) will return -EOVERLFLOW.
+	 */
+	BUILD_BUG_ON(ilog2(OVL_MAX_STACK) > 31);
+	if (ofs->same_sb) {
 		ofs->xino_bits = 0;
+		ofs->config.xino = false;
+	} else if (ofs->config.xino && !ofs->xino_bits) {
+		ofs->xino_bits = ilog2(ofs->numlower) + 1;
+	}
 
 	if (!(ovl_force_readonly(ofs)) && ofs->config.index) {
 		err = ovl_get_indexdir(ofs, oe, &upperpath);
