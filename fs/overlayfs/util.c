@@ -401,6 +401,27 @@ int ovl_set_impure(struct dentry *dentry, struct dentry *upperdentry)
 	return err;
 }
 
+int ovl_set_whiteouts(struct dentry *dentry)
+{
+	struct dentry *upper = ovl_dentry_upper(dentry);
+
+	if (ovl_test_flag(OVL_WHITEOUTS, d_inode(dentry)))
+		return 0;
+
+	/*
+	 * Mark that pure dir has whiteouts by setting a the 'whiteouts' flag,
+	 * so we are protected from exposing whiteouts while inode remains in
+	 * cache.  If dir is upper and xattr supported, set a 'null' origin fh
+	 * so the 'whiteouts' flag will be set when loading inode from disk.
+	 */
+	ovl_set_flag(OVL_WHITEOUTS, d_inode(dentry));
+
+	if (!upper)
+		return 0;
+
+	return ovl_check_setxattr(dentry, upper, OVL_XATTR_ORIGIN, "", 0, 0);
+}
+
 void ovl_set_flag(unsigned long flag, struct inode *inode)
 {
 	set_bit(flag, &OVL_I(inode)->flags);

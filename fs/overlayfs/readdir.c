@@ -475,6 +475,9 @@ static int ovl_cache_update_ino(struct path *path, struct ovl_cache_entry *p)
 			this = NULL;
 			goto fail;
 		}
+		/* Nothing there? assume this is a whiteout */
+		if (p->type == DT_CHR)
+			p->is_whiteout = true;
 		goto out;
 	}
 
@@ -550,7 +553,15 @@ static int ovl_dir_read_impure(struct path *path,  struct list_head *list,
 			if (err)
 				return err;
 		}
-		if (p->ino == p->real_ino) {
+		if (p->is_whiteout) {
+			/*
+			 * Found a leftover whiteout in non-merge dir from a
+			 * time it was upper of merge dir? abort impure dir
+			 * iteration and fall back to merge dir iteration to
+			 * filter out whiteouts.
+			 */
+			return -ESTALE;
+		} else if (p->ino == p->real_ino) {
 			list_del(&p->l_node);
 			kfree(p);
 		} else {
@@ -686,9 +697,33 @@ static int ovl_iterate(struct file *file, struct dir_context *ctx)
 		if (ovl_same_sb(dentry->d_sb) &&
 		    (ovl_test_flag(OVL_IMPURE, d_inode(dentry)) ||
 		     OVL_TYPE_MERGE(ovl_path_type(dentry->d_parent)))) {
-			return ovl_iterate_real(file, ctx);
+			err = ovl_iterate_real(file, ctx);
+			/*
+			 * If we found a whiteout leftover when starting
+			 * non-merge dir iteration (pos == 0), we fall back to
+			 * merge dir iteration after setting the OVL_WHITEOUTS
+			 * inode flag.  If we found a whiteout in the middle of
+			 * non-merge dir iteration, this is very strange,
+			 * because whiteout cannot apear in a non-merge dir,
+			 * so return ESTALE to caller in that case. Next
+			 * iteration will be merge dir iteration.
+			 *
+			 * For pure upper with xattr support, the OVL_WHITEOUTS
+			 * flag is stored as a 'null' origin, so error will be
+			 * healed permanently. For pure lower dir or no xattr
+			 * support, error will be healed for as long as dir
+			 * inode stays in cache.
+			 */
+			if (err == -ESTALE) {
+				ovl_set_whiteouts(dentry);
+				if (!ctx->pos)
+					ovl_dir_reset(file);
+			}
+			if (od->is_real)
+				return err;
+		} else {
+			return iterate_dir(od->realfile, ctx);
 		}
-		return iterate_dir(od->realfile, ctx);
 	}
 
 	if (!od->cache) {
