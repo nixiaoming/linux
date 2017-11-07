@@ -63,6 +63,7 @@ static int ovl_map_dev_ino(struct dentry *dentry, struct kstat *stat)
 {
 	struct ovl_layer *lower_layer = ovl_layer_lower(dentry);
 	bool samefs = ovl_same_sb(dentry->d_sb);
+	int xinobits = ovl_xino_bits(dentry->d_sb);
 
 	if (samefs) {
 		/*
@@ -70,6 +71,24 @@ static int ovl_map_dev_ino(struct dentry *dentry, struct kstat *stat)
 		 * number are unique, so we use the overlay st_dev,
 		 * which is friendly to du -x.
 		 */
+		stat->dev = dentry->d_sb->s_dev;
+	} else if (xinobits) {
+		/*
+		 * All inode numbers of underlying fs should not be using the
+		 * high xinobits, so we use high xinobits to partition the
+		 * overlay st_ino address space. The high bits holds the layer
+		 * index (upper is 0). This way overlay inode numbers are unique
+		 * and all inodes use overlay st_dev. Inode numbers are also
+		 * persistent for a given layer configuration.
+		 */
+		if (stat->ino >> (64 - xinobits)) {
+			pr_warn_ratelimited("overlayfs: inode number too big (%pd2, ino=%llu, xinobits=%d)\n",
+					    dentry, stat->ino, xinobits);
+			return -EOVERFLOW;
+		}
+
+		if (lower_layer)
+			stat->ino |= ((u64)lower_layer->idx) << (64 - xinobits);
 		stat->dev = dentry->d_sb->s_dev;
 	} else if (S_ISDIR(dentry->d_inode->i_mode)) {
 		/*
@@ -116,11 +135,13 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 	/*
 	 * For non-dir or same fs, we use st_ino of the copy up origin.
 	 * This guaranties constant st_dev/st_ino across copy up.
+	 * With xino feature and non-samefs, we use st_ino of the copy up
+	 * origin masked with high bits that represent the layer id.
 	 *
 	 * If lower filesystem supports NFS file handles, this also guaranties
 	 * persistent st_ino across mount cycle.
 	 */
-	if (!is_dir || samefs) {
+	if (!is_dir || samefs || ovl_xino_bits(dentry->d_sb)) {
 		if (OVL_TYPE_ORIGIN(type)) {
 			struct kstat lowerstat;
 			u32 lowermask = STATX_INO | (!is_dir ? STATX_NLINK : 0);
