@@ -17,6 +17,7 @@
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
 #include <linux/posix_acl_xattr.h>
+#include <linux/exportfs.h>
 #include "overlayfs.h"
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
@@ -638,6 +639,7 @@ static int ovl_check_namelen(struct path *path, struct ovl_fs *ofs,
 static int ovl_lower_dir(const char *name, struct path *path,
 			 struct ovl_fs *ofs, int *stack_depth, bool *remote)
 {
+	int fh_type;
 	int err;
 
 	err = ovl_mount_dir_noesc(name, path);
@@ -657,10 +659,14 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	 * The inodes index feature needs to encode and decode file
 	 * handles, so it requires that all layers support them.
 	 */
-	if (ofs->config.index && !ovl_can_decode_fh(path->dentry->d_sb)) {
+	fh_type = ovl_can_decode_fh(path->dentry->d_sb);
+	if (ofs->config.index && !fh_type) {
 		ofs->config.index = false;
 		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off.\n", name);
 	}
+	/* Check if lower fs has 32bit inode numbers */
+	if (fh_type != FILEID_INO32_GEN)
+		ofs->xino_bits = 0;
 
 	return 0;
 
@@ -839,6 +845,7 @@ static const struct xattr_handler *ovl_xattr_handlers[] = {
 static int ovl_get_upper(struct ovl_fs *ofs, struct path *upperpath)
 {
 	struct vfsmount *upper_mnt;
+	int fh_type;
 	int err;
 
 	err = ovl_mount_dir(ofs->config.upperdir, upperpath);
@@ -872,6 +879,16 @@ static int ovl_get_upper(struct ovl_fs *ofs, struct path *upperpath)
 		pr_err("overlayfs: failed to clone upperpath\n");
 		goto out;
 	}
+
+	/* Check if upper fs supports file handles */
+	fh_type = ovl_can_decode_fh(upper_mnt->mnt_sb);
+	if (ofs->config.index && !fh_type) {
+		ofs->config.index = false;
+		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
+	}
+	/* Check if upper fs has 32bit inode numbers */
+	if (fh_type != FILEID_INO32_GEN)
+		ofs->xino_bits = 0;
 
 	/* Don't inherit atime flags */
 	upper_mnt->mnt_flags &= ~(MNT_NOATIME | MNT_NODIRATIME | MNT_RELATIME);
@@ -1176,6 +1193,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_stack_depth = 0;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
+	/* Assume underlaying fs uses 32bit inodes unless proven otherwise */
+	ofs->xino_bits = 32;
 	if (ofs->config.upperdir) {
 		if (!ofs->config.workdir) {
 			pr_err("overlayfs: missing 'workdir'\n");
@@ -1207,6 +1226,10 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_flags |= MS_RDONLY;
 	else if (ofs->upper_mnt->mnt_sb != ofs->same_sb)
 		ofs->same_sb = NULL;
+
+	/* When all layers on same fs, overlay can use real inode numbers */
+	if (ofs->same_sb)
+		ofs->xino_bits = 0;
 
 	if (!(ovl_force_readonly(ofs)) && ofs->config.index) {
 		err = ovl_get_indexdir(ofs, oe, &upperpath);
