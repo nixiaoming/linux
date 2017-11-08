@@ -575,18 +575,6 @@ int ovl_path_next(int idx, struct dentry *dentry, struct path *path)
 	return (idx < oe->numlower) ? idx + 1 : -1;
 }
 
-static int ovl_find_layer(struct ovl_fs *ofs, struct ovl_path *path)
-{
-	int i;
-
-	for (i = 0; i < ofs->numlower; i++) {
-		if (ofs->lower_layers[i].mnt == path->layer->mnt)
-			break;
-	}
-
-	return i;
-}
-
 struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			  unsigned int flags)
 {
@@ -724,11 +712,8 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 
 		if (d.redirect && d.redirect[0] == '/' && poe != roe) {
 			poe = roe;
-
 			/* Find the current layer on the root dentry */
-			i = ovl_find_layer(ofs, &lower);
-			if (WARN_ON(i == ofs->numlower))
-				break;
+			i = lower.layer->idx - 1;
 		}
 	}
 
