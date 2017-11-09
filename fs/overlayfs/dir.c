@@ -159,6 +159,49 @@ int ovl_create_real(struct inode *dir, struct dentry *newdentry,
 	return err;
 }
 
+/*
+ * Test if object exists.
+ * If @creat is true, create object if object doesn't exist.
+ */
+struct dentry *ovl_test_create(struct dentry *parent, const char *name,
+			       umode_t mode, bool creat)
+{
+	struct inode *dir = parent->d_inode;
+	struct dentry *dentry;
+	int err;
+
+	inode_lock_nested(dir, I_MUTEX_PARENT);
+
+	dentry = lookup_one_len(name, parent, strlen(name));
+	err = PTR_ERR(dentry);
+	if (IS_ERR(dentry))
+		return dentry;
+
+	if (!dentry->d_inode) {
+		if (creat) {
+			err = ovl_create_real(dir, dentry,
+					      &(struct cattr){.mode = mode},
+					      NULL, true);
+		} else {
+			err = -ENOENT;
+		}
+	} else if ((mode ^ d_inode(dentry)->i_mode) & S_IFMT) {
+		/* File exists but with wrong file type? */
+		err = -EEXIST;
+	} else {
+		err = 0;
+	}
+
+	inode_unlock(dir);
+
+	if (err) {
+		dput(dentry);
+		return ERR_PTR(err);
+	}
+
+	return dentry;
+}
+
 static int ovl_set_opaque_xerr(struct dentry *dentry, struct dentry *upper,
 			       int xerr)
 {

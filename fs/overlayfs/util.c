@@ -651,3 +651,92 @@ err:
 	pr_err("overlayfs: failed to lock workdir+upperdir\n");
 	return -EIO;
 }
+
+static const char * const ovl_incompat_features[] = {
+#ifdef CONFIG_OVERLAY_FS_INDEX_INCOMPAT
+	OVL_FEATURE_INCOMPAT_INDEX,
+#endif
+	NULL,
+};
+
+bool ovl_is_features_dir(struct dentry *dentry, const char ***features)
+{
+	if (!dentry || !d_is_dir(dentry))
+		return false;
+
+	if (!strcmp(dentry->d_name.name, OVL_INCOMPAT_FEATURES_NAME)) {
+		*features = (const char **)ovl_incompat_features;
+		return true;
+	}
+
+	return false;
+}
+
+bool ovl_is_feature_supported(const char *name, int namelen,
+			      const char **features)
+{
+	const char **p;
+
+	for (p = features; *p; p++) {
+		if (!p[namelen] && !strncmp(name, *p, namelen))
+			return true;
+	}
+	return false;
+}
+
+/*
+ * Create a non-empty directory under features dir, e.g.:
+ * work/incompat_features/incompat_index
+ */
+static int ovl_create_feature_dir(struct dentry *dentry,  struct vfsmount *mnt,
+				  const char *dirname, const char *name)
+{
+	struct dentry *features, *feature, *enabled;
+	int err;
+
+	features = ovl_test_create(dentry, dirname, S_IFDIR | 0, true);
+	err = PTR_ERR(features);
+	if (IS_ERR(features))
+		return err;
+
+	feature = ovl_test_create(features, name, S_IFDIR | 0, true);
+	dput(features);
+	err = PTR_ERR(feature);
+	if (IS_ERR(feature))
+		return err;
+
+	enabled = ovl_test_create(feature, "enabled", S_IFREG | 0, true);
+	dput(feature);
+	err = PTR_ERR(enabled);
+	if (IS_ERR(enabled))
+		return err;
+
+	dput(enabled);
+
+	return 0;
+}
+
+/*
+ * Prevent kernel with no support for the enabled feature from mounting
+ * this overlay read-write and corrupting the index by creating a
+ * non-empty nested dir entires in workdir, that old kernels
+ * do not know how to clean on mount.
+ */
+int ovl_enable_feature(struct ovl_fs *ofs, const char *dirname,
+		       const char *name)
+{
+	struct vfsmount *mnt = ofs->upper_mnt;
+	int err;
+
+	if (!mnt || !ofs->workdir || !ofs->indexdir)
+		return -EROFS;
+
+	err = mnt_want_write(mnt);
+	if (err)
+		return err;
+
+	err = ovl_create_feature_dir(ofs->workdir, mnt, dirname, name);
+
+	mnt_drop_write(mnt);
+	return err;
+}
