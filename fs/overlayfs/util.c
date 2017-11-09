@@ -636,17 +636,31 @@ static const char * const ovl_incompat_features[] = {
 	NULL,
 };
 
-bool ovl_is_features_dir(struct dentry *dentry, const char ***features)
+static const char * const ovl_rocompat_features[] = {
+	NULL,
+};
+
+/*
+ * Returns 0 if not a features dir name.
+ * Returns error value to be returned from mount if an unsuppoted
+ * feature name is found in this features dir.
+ */
+int ovl_is_features_dir(struct dentry *dentry, const char ***features)
 {
 	if (!dentry || !d_is_dir(dentry))
-		return false;
+		return 0;
 
 	if (!strcmp(dentry->d_name.name, OVL_INCOMPAT_FEATURES_NAME)) {
 		*features = (const char **)ovl_incompat_features;
-		return true;
+		return -EINVAL;
 	}
 
-	return false;
+	if (!strcmp(dentry->d_name.name, OVL_ROCOMPAT_FEATURES_NAME)) {
+		*features = (const char **)ovl_rocompat_features;
+		return -EROFS;
+	}
+
+	return 0;
 }
 
 bool ovl_is_feature_supported(const char *name, int namelen,
@@ -662,27 +676,29 @@ bool ovl_is_feature_supported(const char *name, int namelen,
 }
 
 /*
- * Create a non-empty directory under features dir, e.g.:
- * work/incompat_features/incompat_index
+ * Check or create 'enabled' file under under feature dir, e.g.:
+ * work/incompat_features/incompat_index/enabled
+ * If @enable is false, do not create the file and dirs.
  */
-static int ovl_create_feature_dir(struct dentry *dentry,  struct vfsmount *mnt,
-				  const char *dirname, const char *name)
+static int ovl_check_feature_dir(struct dentry *dentry,  struct vfsmount *mnt,
+				  const char *dirname, const char *name,
+				  bool enable)
 {
 	struct dentry *features, *feature, *enabled;
 	int err;
 
-	features = ovl_test_create(dentry, dirname, S_IFDIR | 0, true);
+	features = ovl_test_create(dentry, dirname, S_IFDIR | 0, enable);
 	err = PTR_ERR(features);
 	if (IS_ERR(features))
 		return err;
 
-	feature = ovl_test_create(features, name, S_IFDIR | 0, true);
+	feature = ovl_test_create(features, name, S_IFDIR | 0, enable);
 	dput(features);
 	err = PTR_ERR(feature);
 	if (IS_ERR(feature))
 		return err;
 
-	enabled = ovl_test_create(feature, "enabled", S_IFREG | 0, true);
+	enabled = ovl_test_create(feature, "enabled", S_IFREG | 0, enable);
 	dput(feature);
 	err = PTR_ERR(enabled);
 	if (IS_ERR(enabled))
@@ -696,11 +712,11 @@ static int ovl_create_feature_dir(struct dentry *dentry,  struct vfsmount *mnt,
 /*
  * Prevent kernel with no support for the enabled feature from mounting
  * this overlay read-write and corrupting the index by creating a
- * non-empty nested dir entires in workdir, that old kernels
+ * non-empty nested dir entires in workdir and in indexdir, that old kernels
  * do not know how to clean on mount.
  */
-int ovl_enable_feature(struct ovl_fs *ofs, const char *dirname,
-		       const char *name)
+int ovl_check_feature(struct ovl_fs *ofs, const char *dirname,
+		      const char *name, bool enable, int xerr)
 {
 	struct vfsmount *mnt = ofs->upper_mnt;
 	int err;
@@ -712,7 +728,34 @@ int ovl_enable_feature(struct ovl_fs *ofs, const char *dirname,
 	if (err)
 		return err;
 
-	err = ovl_create_feature_dir(ofs->workdir, mnt, dirname, name);
+	/*
+	 * We never check for features in work dir, we just create the feature
+	 * dirs to prevent old kernels from mounting rw with non-clean workdir.
+	 */
+	if (enable)
+		err = ovl_check_feature_dir(ofs->workdir, mnt, dirname, name,
+					    true);
+	if (!err)
+		err = ovl_check_feature_dir(ofs->indexdir, mnt, dirname, name,
+					    enable);
+
+	/*
+	 * When feature is not enabled for this mount, we test if feature dir
+	 * with 'enabled' file exists from a previous mount. If feature dir
+	 * does not exist, it is ok to proceed with the mount, but if feature
+	 * dir exists, we return error to abort the mount.
+	 */
+	if (!enable) {
+		if (!err)
+			err = xerr;
+		if (err == -ENOENT)
+			err = 0;
+	}
+
+	if (err) {
+		pr_warn("overlayfs: failed to %sable feature '%s' (err=%i)\n",
+			enable ? "en" : "dis", name, err);
+	}
 
 	mnt_drop_write(mnt);
 	return err;

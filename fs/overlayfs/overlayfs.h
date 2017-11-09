@@ -31,6 +31,8 @@ enum ovl_path_type {
 #define OVL_INCOMPAT_FEATURES_NAME "incompat_features"
 #define OVL_FEATURE_INCOMPAT_INDEX "incompat_index"
 
+#define OVL_ROCOMPAT_FEATURES_NAME "rocompat_features"
+
 enum ovl_flag {
 	/* Pure upper dir that may contain non pure upper entries */
 	OVL_IMPURE,
@@ -254,12 +256,26 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 	return ovl_check_dir_xattr(dentry, OVL_XATTR_IMPURE);
 }
 
-bool ovl_is_features_dir(struct dentry *dentry, const char ***features);
+int ovl_is_features_dir(struct dentry *dentry, const char ***features);
 bool ovl_is_feature_supported(const char *name, int namelen,
 			      const char **features);
 struct ovl_fs;
-int ovl_enable_feature(struct ovl_fs *ofs, const char *dirname,
-		       const char *name);
+int ovl_check_feature(struct ovl_fs *ofs, const char *dirname,
+		      const char *name, bool enable, int xerr);
+
+static inline int ovl_check_incompat_feature(struct ovl_fs *ofs,
+					     const char *name, bool enable)
+{
+	return ovl_check_feature(ofs, OVL_INCOMPAT_FEATURES_NAME, name,
+				 enable, -EINVAL);
+}
+
+static inline int ovl_check_rocompat_feature(struct ovl_fs *ofs,
+					     const char *name, bool enable)
+{
+	return ovl_check_feature(ofs, OVL_ROCOMPAT_FEATURES_NAME, name,
+				 enable, -EROFS);
+}
 
 /* namei.c */
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
