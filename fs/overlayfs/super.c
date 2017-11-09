@@ -1036,13 +1036,13 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 			/*
 			 * Prevent from mounting this overlay with index=off or with
 			 * kernel without incompat index support and corrupting the
-			 * index. Enable incompat index feature if verified index dir
+			 * index. Check incompat index feature if verified index dir
 			 * exists and regardless if ovl_indexdir_cleanup() will fail.
 			 */
 			if (!err && ovl_incompat_index) {
-				err = ovl_enable_feature(ofs,
-						 OVL_INCOMPAT_FEATURES_NAME,
-						 OVL_FEATURE_INCOMPAT_INDEX);
+				err = ovl_check_incompat_feature(ofs,
+						OVL_FEATURE_INCOMPAT_INDEX,
+						true);
 				if (err)
 					return err;
 			}
@@ -1053,6 +1053,12 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 							   ofs->upper_mnt,
 							   oe->lowerstack,
 							   oe->numlower);
+			if (err == -EROFS) {
+				pr_warn("overlayfs: unsupported index features; mounting read-only to avoid corrupting inodes index.\n");
+				dput(ofs->indexdir);
+				ofs->indexdir = NULL;
+				err = 0;
+			}
 		}
 		if (err || !ofs->indexdir)
 			pr_warn("overlayfs: try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");

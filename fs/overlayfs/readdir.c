@@ -49,7 +49,8 @@ struct ovl_readdir_data {
 	int count;
 	int err;
 	bool is_upper;
-	bool d_type_supported;
+	const char **match;
+	bool found;
 };
 
 struct ovl_dir_file {
@@ -968,7 +969,7 @@ static int ovl_check_d_type(struct dir_context *ctx, const char *name,
 		return 0;
 
 	if (d_type != DT_UNKNOWN)
-		rdd->d_type_supported = true;
+		rdd->found = true;
 
 	return 0;
 }
@@ -982,14 +983,14 @@ int ovl_check_d_type_supported(struct path *realpath)
 	int err;
 	struct ovl_readdir_data rdd = {
 		.ctx.actor = ovl_check_d_type,
-		.d_type_supported = false,
+		.found = false,
 	};
 
 	err = ovl_dir_read(realpath, &rdd);
 	if (err)
 		return err;
 
-	return rdd.d_type_supported;
+	return rdd.found;
 }
 
 static void ovl_workdir_cleanup_recurse(struct path *path, int level,
@@ -1077,6 +1078,48 @@ void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
 	}
 }
 
+static int ovl_check_feature_name(struct dir_context *ctx, const char *name,
+				  int namelen, loff_t offset, u64 ino,
+				  unsigned int d_type)
+{
+	struct ovl_readdir_data *rdd =
+		container_of(ctx, struct ovl_readdir_data, ctx);
+
+	if (name[0] == '.')
+		return 0;
+
+	if (!ovl_is_feature_supported(name, namelen, rdd->match)) {
+		pr_warn("overlayfs: feature '%.*s' not supported\n",
+			namelen, name);
+		rdd->found = true;
+	}
+
+	return 0;
+}
+
+/*
+ * Returns 0 if all feature names are supported.
+ * Returns 1 if an unsupported feature name was found.
+ * Negative values if other error is encountered.
+ */
+int ovl_check_unsupported_feature(struct dentry *dentry, struct vfsmount *mnt,
+				  const char **features)
+{
+	int err;
+	struct path path = { .mnt = mnt, .dentry = dentry };
+	struct ovl_readdir_data rdd = {
+		.ctx.actor = ovl_check_feature_name,
+		.match = features,
+		.found = false,
+	};
+
+	err = ovl_dir_read(&path, &rdd);
+	if (err)
+		return err;
+
+	return rdd.found;
+}
+
 int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			 struct ovl_path *lower, unsigned int numlower)
 {
@@ -1101,6 +1144,9 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 
 	inode_lock_nested(dir, I_MUTEX_PARENT);
 	list_for_each_entry(p, &list, l_node) {
+		const char **features;
+		int xerr = 0;
+
 		if (p->name[0] == '.') {
 			if (p->len == 1)
 				continue;
@@ -1113,6 +1159,26 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			index = NULL;
 			break;
 		}
+
+		if (d_is_dir(index))
+			xerr = ovl_is_features_dir(index, &features);
+		if (xerr) {
+			/*
+			 * xerr is -EINVAL for incompat features dir and
+			 * -EROFS for rocompat features dir.
+			 */
+			inode_unlock(dir);
+			err = ovl_check_unsupported_feature(index, mnt,
+							    features);
+			if (err > 0)
+				err = xerr;
+			inode_lock_nested(dir, I_MUTEX_PARENT);
+			if (err)
+				break;
+
+			goto next;
+		}
+
 		err = ovl_verify_index(index, lower, numlower);
 		/* Cleanup stale and orphan index entries */
 		if (err && (err == -ESTALE || err == -ENOENT))
@@ -1120,6 +1186,7 @@ int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 		if (err)
 			break;
 
+next:
 		dput(index);
 		index = NULL;
 	}
