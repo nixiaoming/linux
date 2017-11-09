@@ -212,11 +212,6 @@ static bool ovl_type_origin(struct dentry *dentry)
 	return OVL_TYPE_ORIGIN(ovl_path_type(dentry));
 }
 
-static bool ovl_may_have_whiteouts(struct dentry *dentry)
-{
-	return ovl_test_flag(OVL_WHITEOUTS, d_inode(dentry));
-}
-
 static int ovl_create_upper(struct dentry *dentry, struct inode *inode,
 			    struct cattr *attr, struct dentry *hardlink)
 {
@@ -330,37 +325,6 @@ out_unlock:
 	unlock_rename(workdir, upperdir);
 out:
 	return ERR_PTR(err);
-}
-
-static struct dentry *ovl_check_empty_and_clear(struct dentry *dentry)
-{
-	int err;
-	struct dentry *ret = NULL;
-	LIST_HEAD(list);
-
-	err = ovl_check_empty_dir(dentry, &list);
-	if (err) {
-		ret = ERR_PTR(err);
-		goto out_free;
-	}
-
-	/*
-	 * When removing an empty opaque directory, then it makes no sense to
-	 * replace it with an exact replica of itself.
-	 *
-	 * If upperdentry has whiteouts, clear them.
-	 *
-	 * Can race with copy-up, since we don't hold the upperdir mutex.
-	 * Doesn't matter, since copy-up can't create a non-empty directory
-	 * from an empty one.
-	 */
-	if (!list_empty(&list))
-		ret = ovl_clear_empty(dentry, &list);
-
-out_free:
-	ovl_cache_free(&list);
-
-	return ret;
 }
 
 static int ovl_set_upper_acl(struct dentry *upperdentry, const char *name,
@@ -654,7 +618,8 @@ static bool ovl_matches_upper(struct dentry *dentry, struct dentry *upper)
 	return d_inode(ovl_dentry_upper(dentry)) == d_inode(upper);
 }
 
-static int ovl_remove_and_whiteout(struct dentry *dentry, bool is_dir)
+static int ovl_remove_and_whiteout(struct dentry *dentry,
+				   struct list_head *list)
 {
 	struct dentry *workdir = ovl_workdir(dentry);
 	struct dentry *upperdir = ovl_dentry_upper(dentry->d_parent);
@@ -665,8 +630,8 @@ static int ovl_remove_and_whiteout(struct dentry *dentry, bool is_dir)
 	if (WARN_ON(!workdir))
 		return -EROFS;
 
-	if (is_dir) {
-		opaquedir = ovl_check_empty_and_clear(dentry);
+	if (!list_empty(list)) {
+		opaquedir = ovl_clear_empty(dentry, list);
 		err = PTR_ERR(opaquedir);
 		if (IS_ERR(opaquedir))
 			goto out;
@@ -706,7 +671,8 @@ out:
 	return err;
 }
 
-static int ovl_remove_upper(struct dentry *dentry, bool is_dir)
+static int ovl_remove_upper(struct dentry *dentry, bool is_dir,
+			    struct list_head *list)
 {
 	struct dentry *upperdir = ovl_dentry_upper(dentry->d_parent);
 	struct inode *dir = upperdir->d_inode;
@@ -714,10 +680,8 @@ static int ovl_remove_upper(struct dentry *dentry, bool is_dir)
 	struct dentry *opaquedir = NULL;
 	int err;
 
-	/* Redirect/origin dir can be !ovl_lower_positive && not clean */
-	if (is_dir && (ovl_dentry_get_redirect(dentry) ||
-		       ovl_may_have_whiteouts(dentry))) {
-		opaquedir = ovl_check_empty_and_clear(dentry);
+	if (!list_empty(list)) {
+		opaquedir = ovl_clear_empty(dentry, list);
 		err = PTR_ERR(opaquedir);
 		if (IS_ERR(opaquedir))
 			goto out;
@@ -758,11 +722,26 @@ out:
 	return err;
 }
 
+static bool ovl_pure_upper(struct dentry *dentry)
+{
+	return !ovl_dentry_lower(dentry) &&
+	       !ovl_test_flag(OVL_WHITEOUTS, d_inode(dentry));
+}
+
 static int ovl_do_remove(struct dentry *dentry, bool is_dir)
 {
 	int err;
 	bool locked = false;
 	const struct cred *old_cred;
+	bool lower_positive = ovl_lower_positive(dentry);
+	LIST_HEAD(list);
+
+	/* No need to clean pure upper removed by vfs_rmdir() */
+	if (is_dir && (lower_positive || !ovl_pure_upper(dentry))) {
+		err = ovl_check_empty_dir(dentry, &list);
+		if (err)
+			goto out;
+	}
 
 	err = ovl_want_write(dentry);
 	if (err)
@@ -777,10 +756,10 @@ static int ovl_do_remove(struct dentry *dentry, bool is_dir)
 		goto out_drop_write;
 
 	old_cred = ovl_override_creds(dentry->d_sb);
-	if (!ovl_lower_positive(dentry))
-		err = ovl_remove_upper(dentry, is_dir);
+	if (!lower_positive)
+		err = ovl_remove_upper(dentry, is_dir, &list);
 	else
-		err = ovl_remove_and_whiteout(dentry, is_dir);
+		err = ovl_remove_and_whiteout(dentry, &list);
 	revert_creds(old_cred);
 	if (!err) {
 		if (is_dir)
@@ -792,6 +771,7 @@ static int ovl_do_remove(struct dentry *dentry, bool is_dir)
 out_drop_write:
 	ovl_drop_write(dentry);
 out:
+	ovl_cache_free(&list);
 	return err;
 }
 
@@ -927,6 +907,7 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 	bool samedir = olddir == newdir;
 	struct dentry *opaquedir = NULL;
 	const struct cred *old_cred = NULL;
+	LIST_HEAD(list);
 
 	err = -EINVAL;
 	if (flags & ~(RENAME_EXCHANGE | RENAME_NOREPLACE))
@@ -940,6 +921,27 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 		goto out;
 	if (!overwrite && !ovl_can_move(new))
 		goto out;
+
+	if (overwrite && new_is_dir && !ovl_pure_upper(new)) {
+		err = ovl_check_empty_dir(new, &list);
+		if (err)
+			goto out;
+	}
+
+	if (overwrite) {
+		if (ovl_lower_positive(old)) {
+			if (!ovl_dentry_is_whiteout(new)) {
+				/* Whiteout source */
+				flags |= RENAME_WHITEOUT;
+			} else {
+				/* Switch whiteouts */
+				flags |= RENAME_EXCHANGE;
+			}
+		} else if (is_dir && ovl_dentry_is_whiteout(new)) {
+			flags |= RENAME_EXCHANGE;
+			cleanup_whiteout = true;
+		}
+	}
 
 	err = ovl_want_write(old);
 	if (err)
@@ -964,28 +966,12 @@ static int ovl_rename(struct inode *olddir, struct dentry *old,
 
 	old_cred = ovl_override_creds(old->d_sb);
 
-	if (overwrite && new_is_dir && (ovl_type_merge_or_lower(new) ||
-					ovl_may_have_whiteouts(new))) {
-		opaquedir = ovl_check_empty_and_clear(new);
+	if (!list_empty(&list)) {
+		opaquedir = ovl_clear_empty(new, &list);
 		err = PTR_ERR(opaquedir);
 		if (IS_ERR(opaquedir)) {
 			opaquedir = NULL;
 			goto out_revert_creds;
-		}
-	}
-
-	if (overwrite) {
-		if (ovl_lower_positive(old)) {
-			if (!ovl_dentry_is_whiteout(new)) {
-				/* Whiteout source */
-				flags |= RENAME_WHITEOUT;
-			} else {
-				/* Switch whiteouts */
-				flags |= RENAME_EXCHANGE;
-			}
-		} else if (is_dir && ovl_dentry_is_whiteout(new)) {
-			flags |= RENAME_EXCHANGE;
-			cleanup_whiteout = true;
 		}
 	}
 
@@ -1106,6 +1092,7 @@ out_drop_write:
 	ovl_drop_write(old);
 out:
 	dput(opaquedir);
+	ovl_cache_free(&list);
 	return err;
 }
 
