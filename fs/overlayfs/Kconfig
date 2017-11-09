@@ -43,3 +43,11 @@ config OVERLAY_FS_INDEX
 	  outcomes.  However, mounting the same overlay with an old kernel
 	  read-write and then mounting it again with a new kernel, will have
 	  unexpected results.
+
+config OVERLAY_FS_INDEX_INCOMPAT
+	bool "Overlayfs: support incompatible index feature"
+	depends on OVERLAY_FS_INDEX
+	help
+	  If this config option is enabled then inodes index is declared an
+	  incompatible feature and kernel will refuse to mount an overlay with
+	  inodes index off when a non-empty index directory exists.

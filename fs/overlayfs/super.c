@@ -39,6 +39,9 @@ module_param_named(index, ovl_index_def, bool, 0644);
 MODULE_PARM_DESC(ovl_index_def,
 		 "Default to on or off for the inodes index feature");
 
+static const bool ovl_incompat_index =
+	IS_ENABLED(CONFIG_OVERLAY_FS_INDEX_INCOMPAT);
+
 static void ovl_entry_stack_free(struct ovl_entry *oe)
 {
 	unsigned int i;
@@ -1029,29 +1032,50 @@ out:
 static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 			    struct path *upperpath)
 {
-	int err;
+	int err = 0;
 
-	ofs->indexdir = ovl_workdir_create(ofs, OVL_INDEXDIR_NAME, true);
-	if (ofs->indexdir) {
-		/* Verify upper root is index dir origin */
-		err = ovl_verify_origin(ofs->indexdir, upperpath->dentry,
-					true, true);
-		if (err)
-			pr_err("overlayfs: failed to verify index dir origin\n");
+	if (ofs->config.index && ovl_force_readonly(ofs)) {
+		/*
+		 * Cannot enable index without upperdir/workdir and cannot
+		 * test for incompat index dir, but cannot corrupt incompat
+		 * index dir either.
+		 */
+		pr_warn("overlayfs: no upperdir/workdir, falling back to index=off.\n");
+	} else if (ofs->config.index) {
+		ofs->indexdir = ovl_workdir_create(ofs, OVL_INDEXDIR_NAME,
+						   true);
+		if (ofs->indexdir) {
+			/* Verify upper root is index dir origin */
+			err = ovl_verify_origin(ofs->indexdir, upperpath->dentry,
+						true, true);
+			if (err)
+				pr_err("overlayfs: failed to verify index dir origin\n");
 
-		/* Cleanup bad/stale/orphan index entries */
-		if (!err)
-			err = ovl_indexdir_cleanup(ofs->indexdir,
-						   ofs->upper_mnt,
-						   oe->lowerstack,
-						   oe->numlower);
+			/* Cleanup bad/stale/orphan index entries */
+			if (!err)
+				err = ovl_indexdir_cleanup(ofs->indexdir,
+							   ofs->upper_mnt,
+							   oe->lowerstack,
+							   oe->numlower);
+		}
+		if (err || !ofs->indexdir)
+			pr_warn("overlayfs: try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");
+	} else if (ovl_incompat_index) {
+		struct path workpath = {
+			.mnt = ofs->upper_mnt,
+			.dentry = ofs->workbasedir,
+		};
+
+		/*
+		 * User attempts to mount rw with index=off. Remove empty index
+		 * dir if it exists - failure means we need to abort the mount.
+		 */
+		err = ovl_cleanup_path(&workpath, OVL_INDEXDIR_NAME);
+		if (err == -ENOENT)
+			err = 0;
+		else if (err)
+			pr_err("overlayfs: incompatible index dir exists, try deleting index dir to disable inodes index.\n");
 	}
-	if (err || !ofs->indexdir)
-		pr_warn("overlayfs: try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");
-
-	/* Show index=off/on in /proc/mounts for any of the reasons above */
-	if (!ofs->indexdir)
-		ofs->config.index = false;
 
 	if (err)
 		return err;
@@ -1062,6 +1086,14 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 					false, true);
 		if (err)
 			pr_err("overlayfs: failed to verify upper root origin\n");
+	}
+
+
+	/* No index dir with index=on leads to read-only mount */
+	if (ofs->config.index && !ofs->indexdir) {
+		ofs->config.index = false;
+		if (!err)
+			err = -EROFS;
 	}
 
 	return err;
@@ -1283,14 +1315,11 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		ofs->xino_bits = ilog2(ofs->numlower) + 1;
 	}
 
-	if (!(ovl_force_readonly(ofs)) && ofs->config.index) {
-		err = ovl_get_indexdir(ofs, oe, &upperpath);
-		if (err)
-			goto out_free_oe;
-
-		if (!ofs->indexdir)
-			sb->s_flags |= MS_RDONLY;
-	}
+	err = ovl_get_indexdir(ofs, oe, &upperpath);
+	if (err == -EROFS)
+		sb->s_flags |= MS_RDONLY;
+	else if (err)
+		goto out_free_oe;
 
 	/* Never override disk quota limits or use reserved space */
 	cap_lower(cred->cap_effective, CAP_SYS_RESOURCE);
