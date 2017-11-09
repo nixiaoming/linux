@@ -28,6 +28,9 @@ enum ovl_path_type {
 #define OVL_XATTR_IMPURE OVL_XATTR_PREFIX "impure"
 #define OVL_XATTR_NLINK OVL_XATTR_PREFIX "nlink"
 
+#define OVL_INCOMPAT_FEATURES_NAME "incompat_features"
+#define OVL_FEATURE_INCOMPAT_INDEX "incompat_index"
+
 enum ovl_flag {
 	/* Pure upper dir that may contain non pure upper entries */
 	OVL_IMPURE,
@@ -35,6 +38,7 @@ enum ovl_flag {
 	OVL_WHITEOUTS,
 	OVL_INDEX,
 };
+
 
 /*
  * The tuple (fh,uuid) is a universal unique identifier for a copy up origin,
@@ -250,6 +254,12 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 	return ovl_check_dir_xattr(dentry, OVL_XATTR_IMPURE);
 }
 
+bool ovl_is_features_dir(struct dentry *dentry, const char ***features);
+bool ovl_is_feature_supported(const char *name, int namelen,
+			      const char **features);
+struct ovl_fs;
+int ovl_enable_feature(struct ovl_fs *ofs, const char *dirname,
+		       const char *name);
 
 /* namei.c */
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
@@ -269,7 +279,8 @@ void ovl_cache_free(struct list_head *list);
 void ovl_dir_cache_free(struct inode *inode);
 int ovl_check_d_type_supported(struct path *realpath);
 void ovl_workdir_cleanup(struct inode *dir, struct vfsmount *mnt,
-			 struct dentry *dentry, int level);
+			 struct dentry *dentry, int level,
+			 const char **features);
 int ovl_indexdir_cleanup(struct dentry *dentry, struct vfsmount *mnt,
 			 struct ovl_path *lower, unsigned int numlower);
 
@@ -319,6 +330,8 @@ struct cattr {
 int ovl_create_real(struct inode *dir, struct dentry *newdentry,
 		    struct cattr *attr,
 		    struct dentry *hardlink, bool debug);
+struct dentry *ovl_test_create(struct dentry *parent, const char *name,
+			       umode_t mode, bool creat);
 
 /* copy_up.c */
 int ovl_copy_up(struct dentry *dentry);

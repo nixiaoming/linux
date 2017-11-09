@@ -528,7 +528,7 @@ retry:
 				goto out_unlock;
 
 			retried = true;
-			ovl_workdir_cleanup(dir, mnt, work, 0);
+			ovl_workdir_cleanup(dir, mnt, work, 0, NULL);
 			dput(work);
 			goto retry;
 		}
@@ -1050,6 +1050,20 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 						true, true);
 			if (err)
 				pr_err("overlayfs: failed to verify index dir origin\n");
+
+			/*
+			 * Prevent from mounting this overlay with index=off or with
+			 * kernel without incompat index support and corrupting the
+			 * index. Enable incompat index feature if verified index dir
+			 * exists and regardless if ovl_indexdir_cleanup() will fail.
+			 */
+			if (!err && ovl_incompat_index) {
+				err = ovl_enable_feature(ofs,
+						 OVL_INCOMPAT_FEATURES_NAME,
+						 OVL_FEATURE_INCOMPAT_INDEX);
+				if (err)
+					return err;
+			}
 
 			/* Cleanup bad/stale/orphan index entries */
 			if (!err)
