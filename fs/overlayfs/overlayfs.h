@@ -311,6 +311,8 @@ static inline void ovl_copyattr(struct inode *from, struct inode *to)
 
 /* dir.c */
 extern const struct inode_operations ovl_dir_inode_operations;
+int ovl_cleanup(struct inode *dir, struct dentry *dentry);
+int ovl_cleanup_path(struct path *path, const char *name);
 struct dentry *ovl_lookup_temp(struct dentry *workdir);
 struct cattr {
 	dev_t rdev;
@@ -320,7 +322,6 @@ struct cattr {
 int ovl_create_real(struct inode *dir, struct dentry *newdentry,
 		    struct cattr *attr,
 		    struct dentry *hardlink, bool debug);
-int ovl_cleanup(struct inode *dir, struct dentry *dentry);
 
 /* copy_up.c */
 int ovl_copy_up(struct dentry *dentry);

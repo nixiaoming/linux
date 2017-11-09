@@ -8,6 +8,7 @@
  */
 
 #include <linux/fs.h>
+#include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/xattr.h>
 #include <linux/security.h>
@@ -39,6 +40,35 @@ int ovl_cleanup(struct inode *wdir, struct dentry *wdentry)
 		pr_err("overlayfs: cleanup of '%pd2' failed (%i)\n",
 		       wdentry, err);
 	}
+
+	return err;
+}
+
+int ovl_cleanup_path(struct path *path, const char *name)
+{
+	struct inode *dir = path->dentry->d_inode;
+	struct dentry *dentry;
+	int err;
+
+	err = mnt_want_write(path->mnt);
+	if (err)
+		return err;
+
+	inode_lock_nested(dir, I_MUTEX_PARENT);
+
+	dentry = lookup_one_len(name, path->dentry, strlen(name));
+	if (IS_ERR(dentry)) {
+		err = PTR_ERR(dentry);
+		dentry = NULL;
+	} else if (!dentry->d_inode) {
+		err = -ENOENT;
+	} else {
+		err = ovl_cleanup(dir, dentry);
+	}
+
+	dput(dentry);
+	inode_unlock(dir);
+	mnt_drop_write(path->mnt);
 
 	return err;
 }
