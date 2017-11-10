@@ -973,10 +973,15 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	/* Check if upper/work fs supports O_TMPFILE */
 	temp = ovl_do_tmpfile(ofs->workdir, S_IFREG | 0);
 	ofs->tmpfile = !IS_ERR(temp);
-	if (ofs->tmpfile)
+	if (ofs->tmpfile) {
+		/* Check if upper/work supports clone */
+		if (temp->d_inode && temp->d_inode->i_fop &&
+				temp->d_inode->i_fop->clone_file_range)
+			ofs->cloneup = true;
 		dput(temp);
-	else
+	} else {
 		pr_warn("overlayfs: upper fs does not support tmpfile.\n");
+	}
 
 	/*
 	 * Check if upper/work fs supports trusted.overlay.* xattr
@@ -1339,6 +1344,9 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		sb->s_flags |= MS_RDONLY;
 	else if (ofs->upper_mnt->mnt_sb != ofs->same_sb)
 		ofs->same_sb = NULL;
+
+	if (!ofs->same_sb)
+		ofs->cloneup = false;
 
 	/*
 	 * When all layers on same fs, overlay can use real inode numbers.
