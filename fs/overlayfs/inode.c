@@ -77,6 +77,10 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 	bool samefs = ovl_same_sb(dentry->d_sb);
 	int err;
 
+	err = ovl_migrate_copy_up(dentry);
+	if (err)
+		return err;
+
 	type = ovl_path_real(dentry, &realpath);
 	old_cred = ovl_override_creds(dentry->d_sb);
 	err = vfs_getattr(&realpath, stat, request_mask, flags);
@@ -218,9 +222,14 @@ static const char *ovl_get_link(struct dentry *dentry,
 {
 	const struct cred *old_cred;
 	const char *p;
+	int err;
 
 	if (!dentry)
 		return ERR_PTR(-ECHILD);
+
+	err = ovl_migrate_copy_up(dentry);
+	if (err)
+		return ERR_PTR(err);
 
 	old_cred = ovl_override_creds(dentry->d_sb);
 	p = vfs_get_link(ovl_dentry_real(dentry), done);
@@ -280,10 +289,15 @@ int ovl_xattr_get(struct dentry *dentry, struct inode *inode, const char *name,
 {
 	ssize_t res;
 	const struct cred *old_cred;
-	struct dentry *realdentry =
-		ovl_i_dentry_upper(inode) ?: ovl_dentry_lower(dentry);
+	struct dentry *realdentry;
+	int err;
+
+	err = ovl_migrate_copy_up(dentry);
+	if (err)
+		return err;
 
 	old_cred = ovl_override_creds(dentry->d_sb);
+	realdentry = ovl_i_dentry_upper(inode) ?: ovl_dentry_lower(dentry);
 	res = vfs_getxattr(realdentry, name, value, size);
 	revert_creds(old_cred);
 	return res;
@@ -301,14 +315,18 @@ static bool ovl_can_list(const char *s)
 
 ssize_t ovl_listxattr(struct dentry *dentry, char *list, size_t size)
 {
-	struct dentry *realdentry = ovl_dentry_real(dentry);
 	ssize_t res;
 	size_t len;
 	char *s;
 	const struct cred *old_cred;
+	int err;
+
+	err = ovl_migrate_copy_up(dentry);
+	if (err)
+		return err;
 
 	old_cred = ovl_override_creds(dentry->d_sb);
-	res = vfs_listxattr(realdentry, list, size);
+	res = vfs_listxattr(ovl_dentry_real(dentry), list, size);
 	revert_creds(old_cred);
 	if (res <= 0 || size == 0)
 		return res;
@@ -356,6 +374,10 @@ static bool ovl_open_need_copy_up(struct dentry *dentry, int flags)
 	    (ovl_dentry_has_upper_alias(dentry) ||
 	     (dentry->d_flags & DCACHE_DISCONNECTED)))
 		return false;
+
+	/* Copy up any file on open for migration */
+	if (ovl_migrate(dentry->d_sb))
+		return true;
 
 	if (special_file(d_inode(dentry)->i_mode))
 		return false;

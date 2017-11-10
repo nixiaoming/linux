@@ -206,6 +206,7 @@ bool ovl_can_decode_fh(struct super_block *sb);
 struct dentry *ovl_indexdir(struct super_block *sb);
 bool ovl_index_all(struct super_block *sb);
 bool ovl_verify_lower(struct super_block *sb);
+bool ovl_migrate(struct super_block *sb);
 struct ovl_entry *ovl_alloc_entry(unsigned int numlower);
 bool ovl_dentry_remote(struct dentry *dentry);
 bool ovl_dentry_weird(struct dentry *dentry);
@@ -339,6 +340,14 @@ static inline void ovl_copyattr(struct inode *from, struct inode *to)
 	to->i_atime = from->i_atime;
 	to->i_mtime = from->i_mtime;
 	to->i_ctime = from->i_ctime;
+}
+
+/* Copy up any file on access for migration */
+static inline int ovl_migrate_copy_up(struct dentry *dentry)
+{
+	if (unlikely(ovl_migrate(dentry->d_sb)))
+		return ovl_open_maybe_copy_up(dentry, 0);
+	return 0;
 }
 
 /* dir.c */

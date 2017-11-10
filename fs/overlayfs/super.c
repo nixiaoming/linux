@@ -91,19 +91,26 @@ static struct dentry *ovl_d_real(struct dentry *dentry,
 	struct dentry *real;
 	int err;
 
+	if (WARN_ON(open_flags && inode))
+		return dentry;
+
 	if (flags & D_REAL_UPPER)
 		return ovl_dentry_upper(dentry);
+
+	/*
+	 * Copy up regular file on open for write and copy up any file on
+	 * open with "migrate" feature.
+	 */
+	if ((open_flags && d_is_reg(dentry)) || ovl_migrate(dentry->d_sb)) {
+		err = ovl_open_maybe_copy_up(dentry, open_flags);
+		if (err)
+			return ERR_PTR(err);
+	}
 
 	if (!d_is_reg(dentry)) {
 		if (!inode || inode == d_inode(dentry))
 			return dentry;
 		goto bug;
-	}
-
-	if (open_flags) {
-		err = ovl_open_maybe_copy_up(dentry, open_flags);
-		if (err)
-			return ERR_PTR(err);
 	}
 
 	real = ovl_dentry_upper(dentry);
@@ -350,6 +357,8 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 	if (ofs->config.nfs_export != ovl_nfs_export_def)
 		seq_printf(m, ",nfs_export=%s", ofs->config.nfs_export ?
 						"on" : "off");
+	if (ofs->config.migrate)
+		seq_puts(m, ",migrate");
 	return 0;
 }
 
@@ -384,6 +393,7 @@ enum {
 	OPT_INDEX_OFF,
 	OPT_NFS_EXPORT_ON,
 	OPT_NFS_EXPORT_OFF,
+	OPT_MIGRATE,
 	OPT_ERR,
 };
 
@@ -397,6 +407,7 @@ static const match_table_t ovl_tokens = {
 	{OPT_INDEX_OFF,			"index=off"},
 	{OPT_NFS_EXPORT_ON,		"nfs_export=on"},
 	{OPT_NFS_EXPORT_OFF,		"nfs_export=off"},
+	{OPT_MIGRATE,			"migrate"},
 	{OPT_ERR,			NULL}
 };
 
@@ -509,6 +520,10 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 
 		case OPT_NFS_EXPORT_OFF:
 			config->nfs_export = false;
+			break;
+
+		case OPT_MIGRATE:
+			config->migrate = true;
 			break;
 
 		default:
@@ -1102,6 +1117,13 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 	}
 	if (err || !ofs->indexdir)
 		pr_warn("overlayfs: try deleting index dir or mounting with '-o index=off' to disable inodes index.\n");
+
+	/*
+	 * A ro mount can be used to migrate files from lower to upper dir
+	 * as long as there is an upper dir.
+	 */
+	if (ovl_force_readonly(ofs))
+		ofs->config.migrate = false;
 
 out:
 	mnt_drop_write(mnt);
