@@ -431,3 +431,20 @@ int ovl_snapshot_maybe_copy_up(struct dentry *dentry, unsigned int flags)
 
 	return ovl_snapshot_copy_up(dentry);
 }
+
+int ovl_snapshot_want_write(struct dentry *dentry)
+{
+	struct dentry *snap = ovl_snapshot_dentry(dentry);
+
+	if (!snap)
+		return 0;
+
+	if (d_is_negative(dentry))
+		return 0;
+
+	return ovl_snapshot_copy_up(dentry);
+}
+
+void ovl_snapshot_drop_write(struct dentry *dentry)
+{
+}
