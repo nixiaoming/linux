@@ -489,6 +489,8 @@ extern const struct inode_operations ovl_snapshot_inode_operations;
 int ovl_snapshot_fs_register(void);
 void ovl_snapshot_fs_unregister(void);
 int ovl_snapshot_maybe_copy_up(struct dentry *dentry, unsigned int flags);
+int ovl_snapshot_want_write(struct dentry *dentry);
+void ovl_snapshot_drop_write(struct dentry *dentry);
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
@@ -498,6 +500,8 @@ static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 #else
 static inline int ovl_snapshot_fs_register(void) { return 0; }
 static inline void ovl_snapshot_fs_unregister(void) { }
+static inline int ovl_snapshot_want_write(struct dentry *dentry) { return 0; }
+static inline void ovl_snapshot_drop_write(struct dentry *dentry) { }
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
