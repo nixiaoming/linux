@@ -868,6 +868,13 @@ int ovl_open_maybe_copy_up(struct dentry *dentry, unsigned int file_flags)
 {
 	int err = 0;
 
+	/* Maybe copy to snapshot on open for write */
+	if (ovl_is_snapshot_fs_type(dentry->d_sb)) {
+		if (ovl_open_flags_need_copy_up(file_flags))
+			err = ovl_snapshot_copy_down(dentry);
+		return err;
+	}
+
 	if (ovl_open_need_copy_up(dentry, file_flags)) {
 		err = ovl_want_write(dentry);
 		if (!err) {
