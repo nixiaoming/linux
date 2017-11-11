@@ -14,8 +14,11 @@
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/mount.h>
+#include <linux/cred.h>
+#include <linux/namei.h>
 #include <linux/parser.h>
 #include <linux/seq_file.h>
+#include <linux/ratelimit.h>
 #include "overlayfs.h"
 
 static void ovl_snapshot_dentry_release(struct dentry *dentry)
@@ -370,4 +373,61 @@ int ovl_snapshot_lookup(struct dentry *parent, struct ovl_lookup_data *d,
 		return 0;
 
 	return ovl_lookup_layer(snapdir, d, ret);
+}
+
+/*
+ * Copy to snapshot if needed before file is modified.
+ */
+static int ovl_snapshot_copy_up(struct dentry *dentry)
+{
+	struct inode *inode = d_inode(dentry);
+	struct dentry *snap = ovl_snapshot_dentry(dentry);
+	int err = -ENOENT;
+
+	if (WARN_ON(d_is_negative(dentry)))
+		goto bug;
+
+	/*
+	 * Snapshot dentry may be positive or negative or NULL.
+	 * If positive, it may need to be copied up.
+	 * If negative, it should be a whiteout.
+	 * Otherwise, the entry is nested inside an already
+	 * whited out directory, so need to do nothing about it.
+	 */
+	if (!snap)
+		return 0;
+
+	if (d_is_negative(snap)) {
+		if (WARN_ON(!ovl_dentry_is_opaque(snap)))
+			goto bug;
+		return 0;
+	}
+
+	if (ovl_dentry_upper(snap) && ovl_dentry_has_upper_alias(snap))
+		return 0;
+
+	/* Trigger copy up in snapshot overlay */
+	err = ovl_want_write(snap);
+	if (err)
+		goto bug;
+	err = ovl_copy_up_with_data(snap);
+	ovl_drop_write(snap);
+	if (err)
+		goto bug;
+
+	return 0;
+bug:
+	pr_warn_ratelimited("overlayfs: failed copy to snapshot (%pd2, ino=%lu, err=%i)\n",
+			    dentry, inode ? inode->i_ino : 0, err);
+	/* Allowing write would corrupt snapshot so deny */
+	return -EROFS;
+}
+
+int ovl_snapshot_maybe_copy_up(struct dentry *dentry, unsigned int flags)
+{
+	if (!ovl_open_flags_need_copy_up(flags) ||
+	    special_file(d_inode(dentry)->i_mode))
+		return 0;
+
+	return ovl_snapshot_copy_up(dentry);
 }
