@@ -462,6 +462,8 @@ void ovl_snapshot_fs_unregister(void);
 int ovl_snapshot_lookup(struct dentry *parent, struct ovl_lookup_data *d,
 			struct dentry **ret);
 int ovl_snapshot_copy_down(struct dentry *dentry);
+int ovl_snapshot_want_write(struct dentry *dentry);
+void ovl_snapshot_drop_write(struct dentry *dentry);
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
@@ -471,6 +473,8 @@ static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 #else
 static inline int ovl_snapshot_fs_register(void) { return 0; }
 static inline void ovl_snapshot_fs_unregister(void) { }
+static inline int ovl_snapshot_want_write(struct dentry *dentry) { return 0; }
+static inline void ovl_snapshot_drop_write(struct dentry *dentry) { }
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
