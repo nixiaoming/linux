@@ -456,6 +456,7 @@ int ovl_snapshot_fs_register(void);
 void ovl_snapshot_fs_unregister(void);
 int ovl_snapshot_lookup(struct dentry *parent, struct ovl_lookup_data *d,
 			struct dentry **ret);
+int ovl_snapshot_copy_down(struct dentry *dentry);
 
 static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 {
@@ -474,6 +475,11 @@ static inline bool ovl_is_snapshot_fs_type(struct super_block *sb)
 static inline int ovl_snapshot_lookup(struct dentry *parent,
 				      struct ovl_lookup_data *d,
 				      struct dentry **ret)
+{
+	return 0;
+}
+
+static inline int ovl_snapshot_copy_down(struct dentry *dentry)
 {
 	return 0;
 }
