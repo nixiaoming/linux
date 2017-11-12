@@ -689,8 +689,12 @@ int ovl_snapshot_verify(struct dentry *snapdentry, struct dentry *upperdentry,
 
 	/* Redirect should not be pointing at negative */
 	if (!snapdentry->d_inode) {
-		if (!upperdentry && !ovl_dentry_is_opaque(snapdentry))
-			return 0;
+		if (!ovl_dentry_is_opaque(snapdentry)) {
+			if (!upperdentry)
+				return 0;
+			/* Either a stale redirect or inconsitency */
+			err = -ENOENT;
+		}
 		goto no_redirect;
 	}
 
@@ -714,6 +718,13 @@ no_redirect:
 	if (redirect && upperdentry) {
 		ovl_do_removexattr(upperdentry, OVL_XATTR_REDIRECT);
 		err = -ESTALE;
+	} else if (err && snapdentry) {
+		/* We cannot recover from this lookup error */
+		pr_warn_ratelimited("%s(%pd2): is_dir=%d, negative=%d, snap_is_dir=%d, snap_negative=%d, err=%i\n",
+				    __func__, snapdentry,
+				    upperdentry && d_is_dir(upperdentry),
+				    !upperdentry, d_is_dir(snapdentry),
+				    d_is_negative(snapdentry), err);
 	}
 	return err;
 }
