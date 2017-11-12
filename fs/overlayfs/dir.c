@@ -890,9 +890,18 @@ static bool ovl_type_merge_or_lower(struct dentry *dentry)
 	if (ovl_is_snapshot_fs_type(dentry->d_sb) && d_is_dir(dentry)) {
 		struct dentry *snap = ovl_snapshot_dentry(dentry);
 
+		if (unlikely(IS_ERR(snap))) {
+			pr_warn_ratelimited("%s(%pd2): err=%i\n", __func__,
+					    dentry, (int)PTR_ERR(snap));
+			d_drop(dentry);
+			return false;
+		}
+
 		/* No redirect if no need to copy children to snapshot */
-		if (snap && snap->d_inode && !IS_ROOT(snap))
+		if (snap && snap->d_inode)
 			type = ovl_path_type(snap);
+
+		dput(snap);
 	}
 
 	return OVL_TYPE_MERGE(type) || !OVL_TYPE_UPPER(type);
