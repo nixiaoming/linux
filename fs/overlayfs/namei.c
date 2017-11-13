@@ -546,18 +546,18 @@ int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 	if (err)
 		goto fail;
 
-	err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
-	if (err)
-		goto fail;
-
 	/*
 	 * Whiteout index entries are used as an indication that
 	 * an exported overlay file handle should be treated as stale
 	 * (i.e. after unlink/rmdir of the overlay inode).
-	 * These entries contain no xattr.
+	 * These entries contain no origin xattr.
 	 */
-	if (ovl_is_whiteout(index))
+	if (ovl_is_whiteout(index)) {
+		err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
+		if (err)
+			goto fail;
 		goto out;
+	}
 
 	/*
 	 * Directory index entries should have origin xattr pointing to the
@@ -586,10 +586,19 @@ int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 	if (err)
 		goto fail;
 
-	/* Check if index is orphan and don't warn before cleaning it */
-	if (!d_is_dir(index) && d_inode(index)->i_nlink == 1 &&
-	    ovl_get_nlink(index, origin.dentry, 0) == 0)
-		goto orphan;
+	/*
+	 * Check if non-dir origin is stale that needs to be cleaned or if it
+	 * is an orphan that needs to be whited out.
+	 */
+	if (!d_is_dir(index)) {
+		err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
+		if (err)
+			goto fail;
+
+		if (d_inode(index)->i_nlink == 1 &&
+		    ovl_get_nlink(index, origin.dentry, 0) == 0)
+			goto orphan;
+	}
 
 out:
 	dput(origin.dentry);
@@ -609,6 +618,55 @@ orphan:
 	goto out;
 }
 
+static int ovl_get_index_name_fh(struct ovl_fh *fh, struct qstr *name)
+{
+	char *n, *s;
+
+	n = kzalloc(fh->len * 2, GFP_KERNEL);
+	if (!n)
+		return -ENOMEM;
+
+	s  = bin2hex(n, fh, fh->len);
+	*name = (struct qstr) QSTR_INIT(n, s - n);
+
+	return 0;
+
+}
+
+/* Lookup indexed upper by file handle for NFS export */
+struct dentry *ovl_lookup_upper(struct dentry *indexdir, struct ovl_fh *fh,
+				struct vfsmount *mnt)
+{
+	struct dentry *index;
+	struct dentry *upper;
+	struct qstr name;
+	int err;
+
+	err = ovl_get_index_name_fh(fh, &name);
+	if (err)
+		return ERR_PTR(err);
+
+	index = lookup_one_len_unlocked(name.name, indexdir, name.len);
+	kfree(name.name);
+	if (IS_ERR(index)) {
+		if (PTR_ERR(index) == -ENOENT)
+			index = NULL;
+		return index;
+	}
+
+	if (d_is_negative(index))
+		upper = NULL;
+	else if (ovl_is_whiteout(index))
+		upper = ERR_PTR(-ESTALE);
+	else if (ovl_dentry_weird(index))
+		upper = ERR_PTR(-EIO);
+	else
+		upper = ovl_index_upper(index, mnt);
+
+	dput(index);
+	return upper;
+}
+
 /*
  * Lookup in indexdir for the index entry of a lower real inode or a copy up
  * origin inode. The index entry name is the hex representation of the lower
@@ -626,9 +684,8 @@ orphan:
  */
 int ovl_get_index_name(struct dentry *origin, struct qstr *name)
 {
-	int err;
 	struct ovl_fh *fh;
-	char *n, *s;
+	int err;
 
 	/*
 	 * We encode a non-connectable file handle for index, because the index
@@ -638,21 +695,15 @@ int ovl_get_index_name(struct dentry *origin, struct qstr *name)
 	if (IS_ERR(fh))
 		return PTR_ERR(fh);
 
-	err = -ENOMEM;
-	n = kzalloc(fh->len * 2, GFP_KERNEL);
-	if (n) {
-		s  = bin2hex(n, fh, fh->len);
-		*name = (struct qstr) QSTR_INIT(n, s - n);
-		err = 0;
-	}
+	err = ovl_get_index_name_fh(fh, name);
+
 	kfree(fh);
-
 	return err;
-
 }
 
-struct dentry *ovl_lookup_index(struct dentry *indexdir, struct dentry *upper,
-				struct dentry *origin)
+static struct dentry *ovl_lookup_index(struct dentry *indexdir,
+				       struct dentry *upper,
+				       struct dentry *origin)
 {
 	struct dentry *index;
 	struct inode *inode;
@@ -681,18 +732,6 @@ struct dentry *ovl_lookup_index(struct dentry *indexdir, struct dentry *upper,
 	inode = d_inode(index);
 	if (d_is_negative(index)) {
 		goto out_dput;
-	} else if (ovl_is_whiteout(index) && !upper) {
-		/*
-		 * When index lookup is called with no upper for decoding an
-		 * overlay file handle, a whiteout index implies that decode
-		 * should treat file handle as stale.
-		 *
-		 * TODO: store upper origin in whiteout index to check if
-		 *       upper is unlinked but still alive.
-		 */
-		dput(index);
-		index = ERR_PTR(-ESTALE);
-		goto out;
 	} else if (ovl_dentry_weird(index) || ovl_is_whiteout(index) ||
 		   ((inode->i_mode ^ d_inode(origin)->i_mode) & S_IFMT)) {
 		/*

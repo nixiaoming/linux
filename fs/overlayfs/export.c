@@ -269,7 +269,6 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
 	struct dentry *upper = NULL;
-	struct dentry *index = NULL;
 	struct dentry *origin = NULL;
 	struct dentry *dentry = NULL;
 	struct inode *inode;
@@ -341,37 +340,36 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 			break;
 	}
 
-	if (IS_ERR_OR_NULL(origin)) {
+	if (IS_ERR(origin)) {
 		err = PTR_ERR(origin);
-		if (err && err != -ESTALE)
+		if (err != -ESTALE)
 			goto out_err;
 		goto notfound;
 	}
 
 	/* Lookup overlay inode in inode cache by decoded origin inode */
-	inode = ovl_lookup_inode(sb, origin);
-	if (inode) {
-		upper = dget(ovl_i_dentry_upper(inode));
-		iput(inode);
-		goto obtain_alias;
+	if (origin) {
+		inode = ovl_lookup_inode(sb, origin);
+		if (inode) {
+			upper = dget(ovl_i_dentry_upper(inode));
+			iput(inode);
+			goto obtain_alias;
+		}
 	}
 
-	/* Lookup index by decoded origin */
-	index = ovl_lookup_index(ofs->indexdir, NULL, origin);
-	if (IS_ERR(index)) {
-		err = PTR_ERR(index);
+	/*
+	 * Lookup indexed upper by origin fh. Even if we failed to decode
+	 * origin, we want to find an upper inode by index if it exists.
+	 */
+	upper = ovl_lookup_upper(ofs->indexdir, fh, ofs->upper_mnt);
+	if (IS_ERR_OR_NULL(upper)) {
+		err = PTR_ERR(upper);
 		if (err && err != -ESTALE)
 			goto out_err;
 		goto notfound;
 	}
 
-	if (index) {
-		/* Get upper dentry from index */
-		upper = ovl_index_upper(index, ofs->upper_mnt);
-		err = PTR_ERR(upper);
-		if (IS_ERR(upper))
-			goto out_err;
-
+	if (upper && origin) {
 		err = ovl_verify_origin(upper, origin, false, false);
 		if (err)
 			goto out_err;
@@ -381,18 +379,17 @@ obtain_alias:
 	dentry = ovl_obtain_alias(sb, upper, origin);
 
 out:
-	if (!IS_ERR(index))
-		dput(index);
 	if (!IS_ERR(origin))
 		dput(origin);
 	return dentry;
 
 out_err:
-	pr_warn_ratelimited("overlayfs: failed to decode file handle (len=%d, type=%d, err=%i, u/i/o=%ld/%ld/%ld)\n",
+	pr_warn_ratelimited("overlayfs: failed to decode file handle (len=%d, type=%d, err=%i, upper=%ld, origin=%ld)\n",
 			    len, fh_type, err,
 			    IS_ERR(upper) ? PTR_ERR(upper) : !!upper,
-			    IS_ERR(index) ? PTR_ERR(index) : !!index,
 			    IS_ERR(origin) ? PTR_ERR(origin) : !!origin);
+	if (!IS_ERR(upper))
+		dput(upper);
 notfound:
 	dentry = ERR_PTR(err);
 	goto out;
