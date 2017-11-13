@@ -413,8 +413,6 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 	struct ovl_entry *roe = root->d_fsdata;
 	struct dentry *parent;
 	struct dentry *upper;
-	struct dentry *origin = NULL;
-	struct dentry *index = NULL;
 	struct ovl_path *stack = NULL;
 	unsigned int ctr = 0;
 	int err;
@@ -446,38 +444,17 @@ static struct dentry *ovl_get_parent(struct dentry *dentry)
 	if (err)
 		goto out_err;
 
-	if (ctr) {
-		/*
-		 * Lookup index by decoded origin to verify dir is indexed.
-		 * We only decode upper with origin if it is indexed, so NFS
-		 * export will work only if overlay was mounted with index=all
-		 * from the start.
-		 */
-		origin = stack[0].dentry;
-		index = ovl_lookup_index(ovl_indexdir(dentry->d_sb), upper,
-					 origin);
-		err = index ? PTR_ERR(index) : -ENOENT;
-		if (IS_ERR_OR_NULL(index))
-			goto out_err;
-	}
-
 	/* Find or instantiate an upper dentry */
-	parent = ovl_obtain_alias(dentry->d_sb, upper, origin);
+	parent = ovl_obtain_alias(dentry->d_sb, upper, stack[0].dentry);
+	dput(stack[0].dentry);
 
 out:
-	if (!IS_ERR(index))
-		dput(index);
-	if (!IS_ERR(origin))
-		dput(origin);
 	kfree(stack);
 	return parent;
 
 out_err:
-	pr_warn_ratelimited("overlayfs: failed to decode parent (%pd2, err=%i, u/i/o=%ld/%ld/%ld)\n",
-			    dentry, err,
-			    IS_ERR(upper) ? PTR_ERR(upper) : !!upper,
-			    IS_ERR(index) ? PTR_ERR(index) : !!index,
-			    IS_ERR(origin) ? PTR_ERR(origin) : !!origin);
+	pr_warn_ratelimited("overlayfs: failed to decode parent (%pd2, err=%i)\n",
+			    dentry, err);
 	dput(upper);
 	parent = ERR_PTR(err);
 	goto out;
