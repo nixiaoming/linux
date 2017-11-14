@@ -308,6 +308,7 @@ static inline int ovl_check_rocompat_feature(struct ovl_fs *ofs,
 /* namei.c */
 char *ovl_get_redirect_xattr(struct dentry *dentry, size_t *len);
 int ovl_check_fh_len(struct ovl_fh *fh, int fh_len);
+struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry);
 struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt);
 int ovl_check_origin(struct dentry *upperdentry, struct ovl_path *lowerstack,
 		     unsigned int numlower, struct ovl_path **stackp,

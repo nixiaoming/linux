@@ -141,7 +141,7 @@ int ovl_check_fh_len(struct ovl_fh *fh, int fh_len)
 	return 0;
 }
 
-static struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry)
+struct ovl_fh *ovl_get_origin_fh(struct dentry *dentry)
 {
 	int res, err;
 	struct ovl_fh *fh = NULL;
@@ -421,8 +421,11 @@ static int ovl_verify_origin_fh(struct dentry *dentry, const struct ovl_fh *fh)
 	if (IS_ERR(ofh))
 		return PTR_ERR(ofh);
 
-	if (fh->len != ofh->len || memcmp(fh, ofh, fh->len))
+	if (fh->len != ofh->len || memcmp(fh, ofh, fh->len)) {
 		err = -ESTALE;
+		pr_warn_ratelimited("overlayfs: mismatch origin (%*phN != %*phN)\n",
+				fh->len, fh, ofh->len, ofh);
+	}
 
 	kfree(ofh);
 	return err;

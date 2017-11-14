@@ -71,13 +71,24 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 		upper = ovl_dentry_upper(dentry);
 	}
 
+	/* For upper dir with origin xattr, return the stored origin fh */
+	if (d_is_dir(dentry)) {
+		fh = ovl_get_origin_fh(upper);
+		err = PTR_ERR(fh);
+		if (IS_ERR(fh)) {
+			fh = NULL;
+			goto fail;
+		}
+	}
+
 	/*
 	 * The real encoded inode is the same real inode that is used to hash
 	 * the overlay inode, so we can find overlay inode when decoding the
 	 * real file handle. For merge dir and non-dir with origin, encode the
 	 * origin inode. For root dir and pure upper, encode the upper inode.
 	 */
-	fh = ovl_encode_fh(origin ?: upper, !origin, false);
+	if (!fh)
+		fh = ovl_encode_fh(origin ?: upper, !origin, false);
 
 	/*
 	 * Set the nested flag on the if encoding file handle from nested lower
