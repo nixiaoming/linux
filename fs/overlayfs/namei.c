@@ -1047,6 +1047,11 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		OVL_I(inode)->redirect = upperredirect;
 		if (index)
 			ovl_set_flag(OVL_INDEX, inode);
+
+		if (!ctr && ovl_verify_dir(dentry->d_sb) &&
+		    ovl_test_flag(OVL_WHITEOUTS, inode))
+			pr_warn_ratelimited("overlayfs: failed to decode origin (%pd2)\n",
+					    upperdentry);
 	}
 
 	revert_creds(old_cred);
