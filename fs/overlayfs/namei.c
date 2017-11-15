@@ -613,18 +613,50 @@ int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 		goto fail;
 
 	/*
+	 * decode dir nested fh of non-upper dir will cause copy up and try to
+	 * take sb_writers on upper fs, but we already hold sb_writers for
+	 * nested upper fs.
+	 * TODO: decode origin of dir index entries on a second pass without
+	 *       grabbing the sb_writers lock.
+	 */
+#if 0
+	if (d_is_dir(index))
+		goto out;
+#endif
+
+	err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
+	if (err && (!d_is_dir(index) || err != -ESTALE))
+		goto fail;
+
+	/*
+	 * Check if dir origin is stale or renamed.
+	 * TODO: set opaque/redirect xattr.
+	 */
+	if (d_is_dir(index)) {
+		if (err) {
+			ovl_do_setxattr(upper, OVL_XATTR_OPAQUE, "y", 1, 0);
+			pr_warn_ratelimited("overlayfs: implicit opaque dir (%pd2)\n",
+					    upper);
+		} else if (origin.dentry->d_name.len != upper->d_name.len ||
+			   memcmp(origin.dentry->d_name.name,
+				  upper->d_name.name, upper->d_name.len)) {
+			/* TODO: compare and/or set absolute redirect path */
+			ovl_do_setxattr(upper, OVL_XATTR_REDIRECT,
+					origin.dentry->d_name.name,
+					origin.dentry->d_name.len, 0);
+			pr_warn_ratelimited("overlayfs: implicit redirect dir (%pd2 -> %pd2)\n",
+					    upper, origin.dentry);
+		}
+		goto out;
+	}
+
+	/*
 	 * Check if non-dir origin is stale that needs to be cleaned or if it
 	 * is an orphan that needs to be whited out.
 	 */
-	if (!d_is_dir(index)) {
-		err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
-		if (err)
-			goto fail;
-
-		if (d_inode(index)->i_nlink == 1 &&
-		    ovl_get_nlink(index, origin.dentry, 0) == 0)
-			goto orphan;
-	}
+	if (d_inode(index)->i_nlink == 1 &&
+	    ovl_get_nlink(index, origin.dentry, 0) == 0)
+		goto orphan;
 
 out:
 	dput(origin.dentry);
