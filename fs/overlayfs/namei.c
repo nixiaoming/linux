@@ -532,6 +532,50 @@ static bool ovl_is_temp_index(struct dentry *index)
 }
 
 /*
+ * Compare upper and lower paths.
+ *
+ * Return true is paths are equal.
+ * Set @samedir to true if dirnames are equal and only basename differ.
+ */
+static bool ovl_compare_path(struct path *upperpath, struct ovl_path *lowerpath,
+			     bool *samedir)
+{
+	struct dentry *u, *l, *tmp;
+
+	/* First compare dirnames */
+	u = dget(upperpath->dentry);
+	l = dget(lowerpath->dentry);
+	while (!IS_ROOT(u) && !IS_ROOT(l)) {
+		tmp = dget(l->d_parent);
+		dput(l);
+		l = tmp;
+		tmp = dget(u->d_parent);
+		dput(u);
+		u = tmp;
+
+		if (u == upperpath->mnt->mnt_root ||
+		    l == lowerpath->layer->mnt->mnt_root)
+			break;
+
+		if (u->d_name.len != l->d_name.len ||
+		    memcmp(u->d_name.name, l->d_name.name, u->d_name.len))
+			break;
+	}
+	*samedir = (u == upperpath->mnt->mnt_root &&
+		    l == lowerpath->layer->mnt->mnt_root);
+	dput(u);
+	dput(l);
+
+	if (!*samedir)
+		return false;
+
+	u = upperpath->dentry;
+	l = lowerpath->dentry;
+	return (u->d_name.len == l->d_name.len &&
+		!memcmp(u->d_name.name, l->d_name.name, u->d_name.len));
+}
+
+/*
  * Verify that an index entry name matches the origin file handle stored in
  * OVL_XATTR_ORIGIN and that origin file handle can be decoded to lower path.
  * Return 0 on match, -ESTALE on mismatch or stale origin, < 0 on error.
@@ -619,35 +663,46 @@ int ovl_verify_index(struct dentry *index, struct vfsmount *mnt,
 	 * TODO: decode origin of dir index entries on a second pass without
 	 *       grabbing the sb_writers lock.
 	 */
-#if 0
-	if (d_is_dir(index))
+
+	if (d_is_dir(index) &&
+	    lower[0].layer->mnt->mnt_sb->s_type != &ovl_fs_type)
 		goto out;
-#endif
 
 	err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
-	if (err && (!d_is_dir(index) || err != -ESTALE))
+	if (err && (err != -ESTALE))
 		goto fail;
 
 	/*
-	 * Check if dir origin is stale or renamed.
-	 * TODO: set opaque/redirect xattr.
+	 * Check if dir origin is stale or renamed and set opaque/redirect
+	 * xattr.
+	 *
+	 * TODO: check if already opaque/redirect
 	 */
 	if (d_is_dir(index)) {
+		struct path upperpath = { .mnt = mnt, .dentry = upper };
+		const char *redirect;
+		bool samedir;
+
 		if (err) {
 			ovl_do_setxattr(upper, OVL_XATTR_OPAQUE, "y", 1, 0);
 			pr_warn_ratelimited("overlayfs: implicit opaque dir (%pd2)\n",
 					    upper);
-		} else if (origin.dentry->d_name.len != upper->d_name.len ||
-			   memcmp(origin.dentry->d_name.name,
-				  upper->d_name.name, upper->d_name.len)) {
-			/* TODO: compare and/or set absolute redirect path */
+		} else if (!ovl_compare_path(&upperpath, stack, &samedir)) {
+			redirect = ovl_get_redirect(origin.dentry, samedir);
+			err = PTR_ERR(redirect);
+			if (IS_ERR(redirect))
+				goto fail;
+
 			ovl_do_setxattr(upper, OVL_XATTR_REDIRECT,
-					origin.dentry->d_name.name,
-					origin.dentry->d_name.len, 0);
-			pr_warn_ratelimited("overlayfs: implicit redirect dir (%pd2 -> %pd2)\n",
-					    upper, origin.dentry);
+					redirect, strlen(redirect), 0);
+			pr_warn_ratelimited("overlayfs: implicit redirect dir (%pd2 -> %s)\n",
+					    upper, redirect);
+			kfree(redirect);
 		}
+		err = 0;
 		goto out;
+	} else if (err) {
+		goto fail;
 	}
 
 	/*

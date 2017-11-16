@@ -901,7 +901,7 @@ static bool ovl_can_move(struct dentry *dentry)
 		!d_is_dir(dentry) || !ovl_type_merge_or_lower(dentry);
 }
 
-static char *ovl_get_redirect(struct dentry *dentry, bool samedir)
+char *ovl_get_redirect(struct dentry *dentry, bool samedir)
 {
 	char *buf, *ret;
 	struct dentry *d, *tmp;
