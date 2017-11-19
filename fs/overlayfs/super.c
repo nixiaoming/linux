@@ -408,6 +408,8 @@ static char *ovl_next_opt(char **s)
 	return sbegin;
 }
 
+extern int exportfs_connectable;
+
 static int ovl_parse_opt(char *opt, struct ovl_config *config)
 {
 	char *p;
@@ -444,6 +446,8 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 
 		case OPT_DEFAULT_PERMISSIONS:
 			config->default_permissions = true;
+			/* Hack to debug connectable file handles */
+			exportfs_connectable = 1;
 			break;
 
 		case OPT_REDIRECT_DIR_ON:
