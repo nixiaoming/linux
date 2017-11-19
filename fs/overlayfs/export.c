@@ -19,23 +19,6 @@
 #include <linux/ratelimit.h>
 #include "overlayfs.h"
 
-static int ovl_maybe_copy_up_dir(struct dentry *dentry)
-{
-	int err;
-
-	if (!d_is_dir(dentry) || ovl_dentry_upper(dentry))
-		return 0;
-
-	err = ovl_want_write(dentry);
-	if (err)
-		return err;
-
-	err = ovl_copy_up(dentry);
-
-	ovl_drop_write(dentry);
-	return err;
-}
-
 int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen, int connectable)
 {
 	struct dentry *origin = ovl_dentry_lower(dentry);
@@ -66,20 +49,6 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen, int connectable)
 	err = -EIO;
 	if (upper && origin && !ovl_test_flag(OVL_INDEX, d_inode(dentry)))
 		goto fail;
-
-	/*
-	 * Copy up directory on encode to create an index. We need the index
-	 * to decode a connected upper dir dentry, which we will use to
-	 * reconnect a disconnected overlay dir dentry.
-	 *
-	 * TODO: we now have lazy copy up on decode if dentry is not in cache.
-	 *       do we still need this early copy up because it is cheaper??
-	 */
-	err = ovl_maybe_copy_up_dir(dentry);
-	if (err)
-		goto fail;
-
-	upper = ovl_dentry_upper(dentry);
 
 	/* For upper dir with origin xattr, return the stored origin fh */
 	if (d_is_dir(dentry) && upper) {
@@ -311,7 +280,7 @@ static int ovl_connect_one(struct dentry *parent, struct dentry *real,
 		this = d_find_any_alias(inode);
 		iput(inode);
 		if (this)
-			goto connected;
+			goto out;
 	}
 
 	/* Lookup indexed upper by lower fh */
@@ -340,13 +309,7 @@ connect:
 		goto fail;
 	}
 
-connected:
-	err = ovl_maybe_copy_up_dir(this);
-	if (err) {
-		dput(this);
-		goto fail;
-	}
-
+out:
 	*ret = this;
 	return 0;
 
