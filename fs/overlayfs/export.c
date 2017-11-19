@@ -286,12 +286,13 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 }
 
 /*
- * Lookup upper or copy up one lower directory whose parent is upper path type.
+ * Lookup one overlay dir by upper dir name or copy up one lower dir whose
+ * overlay parent is upper path type.
  *
  * Return the connected upper path type overlay dentry.
  */
-static int ovl_connect_upper_one(struct dentry *parent, struct dentry *lower,
-				 struct dentry **ret)
+static int ovl_connect_dir_one(struct dentry *parent, struct dentry *real,
+			       bool is_upper, struct dentry **ret)
 {
 	struct ovl_fs *ofs = parent->d_sb->s_fs_info;
 	struct dentry *this, *upper = NULL;
@@ -300,8 +301,12 @@ static int ovl_connect_upper_one(struct dentry *parent, struct dentry *lower,
 	struct qstr *name;
 	int err;
 
+	/* If we have a connected upper, just lookup same path on overlay */
+	if (is_upper)
+		goto connect;
+
 	/* Lookup overlay inode in inode cache by lower inode */
-	inode = ovl_lookup_inode(parent->d_sb, lower);
+	inode = ovl_lookup_inode(parent->d_sb, real);
 	if (inode) {
 		this = d_find_any_alias(inode);
 		iput(inode);
@@ -310,7 +315,7 @@ static int ovl_connect_upper_one(struct dentry *parent, struct dentry *lower,
 	}
 
 	/* Lookup indexed upper by lower fh */
-	fh = ovl_encode_fh(lower, false, false);
+	fh = ovl_encode_fh(real, false, false);
 	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
 		goto fail;
@@ -321,12 +326,9 @@ static int ovl_connect_upper_one(struct dentry *parent, struct dentry *lower,
 	if (IS_ERR(upper))
 		goto fail;
 
-	/*
-	 * Lookup overlay dentry by upper or lower name.
-	 *
-	 * TODO: obtain dentry from found upper to cover "absolute" redirect.
-	 */
-	name = upper ? &upper->d_name : &lower->d_name;
+connect:
+	/* Lookup overlay dentry by upper or lower name */
+	name = upper ? &upper->d_name : &real->d_name;
 	this = lookup_one_len_unlocked(name->name, parent, name->len);
 	dput(upper);
 	err = PTR_ERR(this);
@@ -349,20 +351,24 @@ connected:
 	return 0;
 
 fail:
-	pr_warn_ratelimited("overlayfs: failed to connect one upper (parent=%pd2, lower=%pd2, upper=%ld, err=%i)\n",
-			    parent, lower,
+	pr_warn_ratelimited("overlayfs: failed to connect one upper (parent=%pd2, real=%pd2, is_upper=%d, upper=%ld, err=%i)\n",
+			    parent, real, is_upper,
 			    IS_ERR(upper) ? PTR_ERR(upper) : !!upper, err);
 	return err;
 }
 
 /*
- * Copy up lower directory ancestry, so get_parent/get_name will have a
- * connected upper.
+ * Walk back either real upper dir parents or real lower dir parents N times.
+ * Each time, ovl_connect_dir_one() progress the 'connected' overlay dentry
+ * one step forward towards a connected upper path type overlay dentry, whose
+ * real dentry is the real dir we started to walk from.
+ * If real dir is lower, copy up lower parents if needed, while conneceting,
+ * so get_parent()/get_name() will have a connected upper to work with.
  *
  * Return the connected upper path type overlay dentry.
  */
-static int ovl_connect_upper(struct super_block *sb, struct dentry *lower,
-			     struct dentry **ret)
+static int ovl_connect_dir(struct super_block *sb, struct dentry *real,
+			   bool is_upper, struct dentry **ret)
 {
 	struct dentry *connected = dget(sb->s_root);
 	int err = 0;
@@ -370,16 +376,19 @@ static int ovl_connect_upper(struct super_block *sb, struct dentry *lower,
 	while (!err) {
 		struct dentry *next, *this;
 		struct dentry *parent = NULL;
+		struct dentry *real_connected = is_upper ?
+						ovl_dentry_upper(connected) :
+						ovl_dentry_lower(connected);
 
-		if (ovl_dentry_lower(connected) == lower)
+		if (real_connected == real)
 			break;
 
-		next = dget(lower);
+		next = dget(real);
 		/* find the topmost dentry not yet connected */
 		for (;;) {
 			parent = dget_parent(next);
 
-			if (ovl_dentry_lower(connected) == parent)
+			if (real_connected == parent)
 				break;
 
 			/*
@@ -397,7 +406,8 @@ static int ovl_connect_upper(struct super_block *sb, struct dentry *lower,
 		}
 
 		if (!err) {
-			err = ovl_connect_upper_one(connected, next, &this);
+			err = ovl_connect_dir_one(connected, next, is_upper,
+						  &this);
 			if (!err) {
 				dput(connected);
 				connected = this;
@@ -415,8 +425,8 @@ static int ovl_connect_upper(struct super_block *sb, struct dentry *lower,
 	return 0;
 
 fail:
-	pr_warn_ratelimited("overlayfs: failed to connect upper (lower=%pd2, connected=%pd2, err=%i)\n",
-			    lower, connected, err);
+	pr_warn_ratelimited("overlayfs: failed to connect upper (real=%pd2, is_upper=%d, connected=%pd2, err=%i)\n",
+			    real, is_upper, connected, err);
 	dput(connected);
 	return err;
 }
@@ -432,6 +442,7 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	struct ovl_fh *fh = (struct ovl_fh *) fid;
 	int len = fh_len << 2;
 	int err, i;
+	bool is_dir;
 	bool nested;
 
 	err = -EINVAL;
@@ -478,6 +489,7 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 			goto notfound;
 		}
 
+		is_dir = d_is_dir(upper);
 		goto obtain_alias;
 	}
 
@@ -504,6 +516,7 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 		goto notfound;
 	}
 
+	is_dir = d_is_dir(origin);
 	/* Lookup overlay inode in inode cache by decoded origin inode */
 	if (origin) {
 		inode = ovl_lookup_inode(sb, origin);
@@ -534,17 +547,22 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 			goto out_err;
 	}
 
-	/* Copy up dir, so get_parent/get_name will have a connected upper */
-	if (!upper && d_is_dir(origin)) {
-		err = ovl_connect_upper(sb, origin, &dentry);
+obtain_alias:
+	/*
+	 * Copy up and connect decoded dir dentry, so get_parent()/get_name()
+	 * will not be needed to reconnect directories. This also mitigates the
+	 * problem that ovl_obtain_alias() doesn't know how to instantiate a
+	 * merge dir with numlowers > 1.
+	 */
+	if (is_dir) {
+		err = ovl_connect_dir(sb, upper ?: origin, !!upper, &dentry);
 		if (err)
 			goto out_err;
-		goto out;
+
+		dput(upper);
+	} else {
+		dentry = ovl_obtain_alias(sb, upper, origin);
 	}
-
-
-obtain_alias:
-	dentry = ovl_obtain_alias(sb, upper, origin);
 
 out:
 	if (!IS_ERR(origin))
@@ -578,54 +596,41 @@ static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
 static struct dentry *ovl_get_parent(struct dentry *dentry)
 {
 	struct dentry *root = dentry->d_sb->s_root;
-	struct ovl_entry *roe = root->d_fsdata;
 	struct dentry *parent;
 	struct dentry *upper;
-	struct ovl_path *stack = NULL;
-	unsigned int ctr = 0;
 	int err;
 
 	/*
-	 * When ovl_fh_to_d() returns an overlay dentry, its real upper
-	 * dentry should be positive and connected. The reconnecting of
-	 * the upper dentry is done by ovl_decode_fh() when decoding the
-	 * real upper file handle, so here we have the upper dentry parent
-	 * and we need to instantiate an overlay dentry with upper dentry
-	 * parent and the lower dir pointed to by origin xattr.
-	 *
-	 * TODO: handle reconnecting of non upper overlay dentry.
+	 * When ovl_fh_to_d() decodes an overlay directory, the returned dentry
+	 * should already be connected, so .get_parent() method should never be
+	 * called from exportfs_decode_fh().
 	 */
-	upper = ovl_dentry_upper(dentry);
+	upper = dget(ovl_dentry_upper(dentry));
 	err = -EIO;
-	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
+	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED) || WARN_ON(1))
 		goto out_err;
 
+	dput(upper);
 	upper = dget_parent(upper);
 	if (upper == ovl_dentry_upper(root)) {
 		dput(upper);
 		return dget(root);
 	}
 
-	/* Check if parent is merge dir or pure upper */
-	err = ovl_check_origin(upper, roe->lowerstack, roe->numlower,
-			       &stack, &ctr);
-	if (err)
+	err = -EIO;
+	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
 		goto out_err;
 
-	/* Find or instantiate an upper dentry */
-	parent = ovl_obtain_alias(dentry->d_sb, upper, stack[0].dentry);
-	dput(stack[0].dentry);
-
-out:
-	kfree(stack);
-	return parent;
+	/* Find or instantiate a pure upper dentry */
+	return ovl_obtain_alias(dentry->d_sb, upper, NULL);
 
 out_err:
-	pr_warn_ratelimited("overlayfs: failed to decode parent (%pd2, err=%i)\n",
-			    dentry, err);
+	pr_warn_ratelimited("overlayfs: failed to decode parent (%pd2, err=%i, upper=%d)\n",
+			    dentry, err,
+			    upper ? !(upper->d_flags & DCACHE_DISCONNECTED) :
+				    -1);
 	dput(upper);
-	parent = ERR_PTR(err);
-	goto out;
+	return ERR_PTR(err);
 }
 
 const struct export_operations ovl_export_operations = {
