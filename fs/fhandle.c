@@ -14,6 +14,9 @@
 #include "internal.h"
 #include "mount.h"
 
+int exportfs_connectable;
+EXPORT_SYMBOL(exportfs_connectable);
+
 static long do_sys_name_to_handle(struct path *path,
 				  struct file_handle __user *ufh,
 				  int __user *mnt_id)
@@ -48,7 +51,7 @@ static long do_sys_name_to_handle(struct path *path,
 	/* we ask for a non connected handle */
 	retval = exportfs_encode_fh(path->dentry,
 				    (struct fid *)handle->f_handle,
-				    &handle_dwords,  0);
+				    &handle_dwords, exportfs_connectable);
 	handle->handle_type = retval;
 	/* convert handle size to bytes */
 	handle_bytes = handle_dwords * sizeof(u32);
@@ -132,9 +135,13 @@ static struct vfsmount *get_vfsmount_from_fd(int fd)
 	return mnt;
 }
 
-static int vfs_dentry_acceptable(void *context, struct dentry *dentry)
+static int vfs_dentry_acceptable(void *mnt, struct dentry *dentry)
 {
-	return 1;
+	if (!exportfs_connectable)
+		return 1;
+
+	/* Check if directory belongs to the fs mounted at mnt */
+	return is_subdir(dentry, ((struct vfsmount *)mnt)->mnt_root);
 }
 
 static int do_handle_to_path(int mountdirfd, struct file_handle *handle,
@@ -153,7 +160,7 @@ static int do_handle_to_path(int mountdirfd, struct file_handle *handle,
 	path->dentry = exportfs_decode_fh(path->mnt,
 					  (struct fid *)handle->f_handle,
 					  handle_dwords, handle->handle_type,
-					  vfs_dentry_acceptable, NULL);
+					  vfs_dentry_acceptable, path->mnt);
 	if (IS_ERR(path->dentry)) {
 		retval = PTR_ERR(path->dentry);
 		goto out_mnt;

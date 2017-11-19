@@ -446,6 +446,8 @@ static int ovl_parse_redirect_mode(struct ovl_config *config, const char *mode)
 	return 0;
 }
 
+extern int exportfs_connectable;
+
 static int ovl_parse_opt(char *opt, struct ovl_config *config)
 {
 	char *p;
@@ -486,6 +488,8 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 
 		case OPT_DEFAULT_PERMISSIONS:
 			config->default_permissions = true;
+			/* Hack to debug connectable file handles */
+			exportfs_connectable = 1;
 			break;
 
 		case OPT_REDIRECT_DIR:
@@ -1247,6 +1251,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	ofs->config.index = ovl_index_def;
 	/* verify depends on index */
 	ofs->config.verify = ovl_verify_def && ovl_index_def;
+	/* Hack to debug connectable file handles */
+	exportfs_connectable = 0;
 	err = ovl_parse_opt((char *) data, &ofs->config);
 	if (err)
 		goto out_err;
