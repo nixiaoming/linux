@@ -441,7 +441,6 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 	struct ovl_fh *fh = (struct ovl_fh *) fid;
 	int len = fh_len << 2;
 	int err, i;
-	bool is_dir;
 	bool nested;
 
 	err = -EINVAL;
@@ -488,7 +487,6 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 			goto notfound;
 		}
 
-		is_dir = d_is_dir(upper);
 		goto obtain_alias;
 	}
 
@@ -515,7 +513,6 @@ static struct dentry *ovl_fh_to_d(struct super_block *sb, struct fid *fid,
 		goto notfound;
 	}
 
-	is_dir = d_is_dir(origin);
 	/* Lookup overlay inode in inode cache by decoded origin inode */
 	if (origin) {
 		inode = ovl_lookup_inode(sb, origin);
@@ -553,7 +550,7 @@ obtain_alias:
 	 * problem that ovl_obtain_alias() doesn't know how to instantiate a
 	 * merge dir with numlowers > 1.
 	 */
-	if (is_dir) {
+	if (d_is_dir(upper ?: origin)) {
 		err = ovl_connect_dir(sb, upper ?: origin, !!upper, &dentry);
 		if (err)
 			goto out_err;
