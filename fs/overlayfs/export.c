@@ -19,9 +19,12 @@
 #include <linux/ratelimit.h>
 #include "overlayfs.h"
 
-static int ovl_copy_up_dir(struct dentry *dentry)
+static int ovl_maybe_copy_up_dir(struct dentry *dentry)
 {
 	int err;
+
+	if (!d_is_dir(dentry) || ovl_dentry_upper(dentry))
+		return 0;
 
 	err = ovl_want_write(dentry);
 	if (err)
@@ -72,13 +75,11 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	 * TODO: we now have lazy copy up on decode if dentry is not in cache.
 	 *       do we still need this early copy up because it is cheaper??
 	 */
-	if (d_is_dir(dentry) && !upper) {
-		err = ovl_copy_up_dir(dentry);
-		if (err)
-			goto fail;
+	err = ovl_maybe_copy_up_dir(dentry);
+	if (err)
+		goto fail;
 
-		upper = ovl_dentry_upper(dentry);
-	}
+	upper = ovl_dentry_upper(dentry);
 
 	/* For upper dir with origin xattr, return the stored origin fh */
 	if (d_is_dir(dentry) && upper) {
@@ -304,10 +305,8 @@ static int ovl_connect_upper_one(struct dentry *parent, struct dentry *lower,
 	if (inode) {
 		this = d_find_any_alias(inode);
 		iput(inode);
-		if (this) {
-			*ret = this;
-			return 0;
-		}
+		if (this)
+			goto connected;
 	}
 
 	/* Lookup indexed upper by lower fh */
@@ -339,12 +338,11 @@ static int ovl_connect_upper_one(struct dentry *parent, struct dentry *lower,
 		goto fail;
 	}
 
-	if (!upper) {
-		err = ovl_copy_up_dir(this);
-		if (err) {
-			dput(this);
-			goto fail;
-		}
+connected:
+	err = ovl_maybe_copy_up_dir(this);
+	if (err) {
+		dput(this);
+		goto fail;
 	}
 
 	*ret = this;
