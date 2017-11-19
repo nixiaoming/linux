@@ -36,7 +36,7 @@ static int ovl_maybe_copy_up_dir(struct dentry *dentry)
 	return err;
 }
 
-int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
+int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen, int connectable)
 {
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct dentry *upper = ovl_dentry_upper(dentry);
@@ -98,7 +98,7 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	 * origin inode. For root dir and pure upper, encode the upper inode.
 	 */
 	if (!fh)
-		fh = ovl_encode_fh(origin ?: upper, !origin, false);
+		fh = ovl_encode_fh(origin ?: upper, !origin, connectable);
 
 	/*
 	 * Set the nested flag on the if encoding file handle from nested lower
@@ -137,7 +137,7 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 	if (WARN_ON(connectable && d_is_dir(dentry)))
 		connectable = 0;
 
-	res = ovl_d_to_fh(dentry, p, rem);
+	res = ovl_d_to_fh(dentry, p, rem, connectable);
 	if (res <= 0)
 		return FILEID_INVALID;
 
@@ -148,7 +148,7 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 		parent = dget_parent(dentry);
 		p += res;
 		rem -= res;
-		res = ovl_d_to_fh(parent, p, rem);
+		res = ovl_d_to_fh(parent, p, rem, 0);
 		dput(parent);
 		if (res <= 0)
 			return FILEID_INVALID;
@@ -286,13 +286,13 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 }
 
 /*
- * Lookup one overlay dir by upper dir name or copy up one lower dir whose
+ * Lookup one overlay dentry by upper name or copy up one lower dir whose
  * overlay parent is upper path type.
  *
  * Return the connected upper path type overlay dentry.
  */
-static int ovl_connect_dir_one(struct dentry *parent, struct dentry *real,
-			       bool is_upper, struct dentry **ret)
+static int ovl_connect_one(struct dentry *parent, struct dentry *real,
+			   bool is_upper, struct dentry **ret)
 {
 	struct ovl_fs *ofs = parent->d_sb->s_fs_info;
 	struct dentry *this, *upper = NULL;
@@ -359,10 +359,10 @@ fail:
 
 /*
  * Walk back either real upper dir parents or real lower dir parents N times.
- * Each time, ovl_connect_dir_one() progress the 'connected' overlay dentry
+ * Each time, ovl_connect_one() progress the 'connected' overlay dentry
  * one step forward towards a connected upper path type overlay dentry, whose
  * real dentry is the real dir we started to walk from.
- * If real dir is lower, copy up lower parents if needed, while conneceting,
+ * If real dir is lower, copy up lower parents if needed, while connecting,
  * so get_parent()/get_name() will have a connected upper to work with.
  *
  * Return the connected upper path type overlay dentry.
@@ -406,8 +406,7 @@ static int ovl_connect_dir(struct super_block *sb, struct dentry *real,
 		}
 
 		if (!err) {
-			err = ovl_connect_dir_one(connected, next, is_upper,
-						  &this);
+			err = ovl_connect_one(connected, next, is_upper, &this);
 			if (!err) {
 				dput(connected);
 				connected = this;
@@ -584,58 +583,88 @@ notfound:
 static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 				       int fh_len, int fh_type)
 {
-	return ovl_fh_to_d(sb, fid, fh_len, fh_type, false);
+	struct dentry *child, *parent = NULL;
+	struct dentry *dentry;
+	struct path realpath;
+	enum ovl_path_type type;
+	int err;
+
+	/* If this is a connectable file handle first decode parent */
+	if (fh_type == OVL_FILEID_WITH_PARENT) {
+		parent = ovl_fh_to_d(sb, fid, fh_len, fh_type, true);
+		if (IS_ERR(parent))
+			return parent;
+	}
+
+	dentry = ovl_fh_to_d(sb, fid, fh_len, fh_type, false);
+
+	if (IS_ERR(dentry) || !parent) {
+		dput(parent);
+		return dentry;
+	}
+
+	/* If we have a connected parent try to get a connected child dentry */
+	type = ovl_path_real(dentry, &realpath);
+	err = ovl_connect_one(parent, realpath.dentry, OVL_TYPE_UPPER(type),
+			      &child);
+	dput(parent);
+	dput(dentry);
+	if (err)
+		return ERR_PTR(err);
+
+	return child;
 }
 
 static struct dentry *ovl_fh_to_parent(struct super_block *sb, struct fid *fid,
 				       int fh_len, int fh_type)
 {
-	return ovl_fh_to_d(sb, fid, fh_len, fh_type, true);
-}
-
-static struct dentry *ovl_get_parent(struct dentry *dentry)
-{
-	struct dentry *root = dentry->d_sb->s_root;
-	struct dentry *parent;
-	struct dentry *upper;
-	int err;
-
 	/*
 	 * When ovl_fh_to_d() decodes an overlay directory, the returned dentry
 	 * should already be connected, so .get_parent() method should never be
 	 * called from exportfs_decode_fh().
 	 */
-	upper = dget(ovl_dentry_upper(dentry));
-	err = -EIO;
-	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED) || WARN_ON(1))
-		goto out_err;
+	WARN_ON_ONCE(1);
+	return ERR_PTR(-EIO);
+	//return ovl_fh_to_d(sb, fid, fh_len, fh_type, true);
+}
 
-	dput(upper);
-	upper = dget_parent(upper);
-	if (upper == ovl_dentry_upper(root)) {
-		dput(upper);
-		return dget(root);
-	}
+static int ovl_get_name(struct dentry *parent, char *name,
+			struct dentry *child)
+{
+	struct dentry *real = ovl_dentry_real(child);
 
-	err = -EIO;
-	if (!upper || (upper->d_flags & DCACHE_DISCONNECTED))
-		goto out_err;
+	/*
+	 * When ovl_fh_to_d() decodes a directory or a connectable non-dir,
+	 * the returned dentry's real dentry should already be connected, so
+	 * .get_name() method should never be called from exportfs_decode_fh()
+	 * with a child dir or with a child whose real dentry is disconnected.
+	 */
+	if (WARN_ON_ONCE(d_is_dir(real)) ||
+	    WARN_ON_ONCE(real->d_flags & DCACHE_DISCONNECTED) ||
+	    WARN_ON_ONCE(1))
+		return -EIO;
 
-	/* Find or instantiate a pure upper dentry */
-	return ovl_obtain_alias(dentry->d_sb, upper, NULL);
+	memcpy(name, real->d_name.name, real->d_name.len);
+	name[real->d_name.len] = '\0';
 
-out_err:
-	pr_warn_ratelimited("overlayfs: failed to decode parent (%pd2, err=%i, upper=%d)\n",
-			    dentry, err,
-			    upper ? !(upper->d_flags & DCACHE_DISCONNECTED) :
-				    -1);
-	dput(upper);
-	return ERR_PTR(err);
+	return 0;
+}
+
+static struct dentry *ovl_get_parent(struct dentry *dentry)
+{
+	/*
+	 * When ovl_fh_to_d() decodes an overlay directory, the returned dentry
+	 * should already be connected, so .get_parent() method should never be
+	 * called from exportfs_decode_fh().
+	 */
+	WARN_ON_ONCE(1);
+	return ERR_PTR(-EIO);
 }
 
 const struct export_operations ovl_export_operations = {
 	.encode_fh      = ovl_encode_inode_fh,
 	.fh_to_dentry	= ovl_fh_to_dentry,
 	.fh_to_parent	= ovl_fh_to_parent,
+	.get_name	= ovl_get_name,
 	.get_parent	= ovl_get_parent,
 };
