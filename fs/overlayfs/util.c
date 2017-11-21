@@ -249,6 +249,36 @@ void ovl_dentry_set_redirect(struct dentry *dentry, const char *redirect)
 
 	kfree(oi->redirect);
 	oi->redirect = redirect;
+	/* Descentandt are marekd RENAMED lazily by ovl_dentry_is_renamed() */
+	ovl_set_flag(OVL_RENAMED, d_inode(dentry));
+}
+
+/*
+ * Check if any component in path has been renamed.
+ *
+ * TODO: lookup non-indexed non-dir upper with non-hardlink origin in lower
+ *       layers and mark it RENAMED if origin not found.
+ */
+bool ovl_dentry_is_renamed(struct dentry *dentry)
+{
+	struct dentry *d, *tmp;
+	bool renamed;
+
+	for (d = dget(dentry); !IS_ROOT(d);) {
+		if (ovl_test_flag(OVL_RENAMED, d_inode(d)))
+			break;
+
+		tmp = dget_parent(d);
+		dput(d);
+		d = tmp;
+	}
+
+	renamed = !IS_ROOT(d);
+	dput(d);
+
+	if (renamed)
+		ovl_set_flag(OVL_RENAMED, d_inode(dentry));
+	return renamed;
 }
 
 void ovl_inode_init(struct inode *inode, struct dentry *upperdentry,
