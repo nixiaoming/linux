@@ -811,6 +811,10 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			goto out_free_oe;
 
 		OVL_I(inode)->redirect = upperredirect;
+		/* OVL_RENAMED indicates rename in any layer/path component */
+		if (d.redirect ||
+		    ovl_test_flag(OVL_RENAMED, d_inode(dentry->d_parent)))
+			ovl_set_flag(OVL_RENAMED, inode);
 		if (index)
 			ovl_set_flag(OVL_INDEX, inode);
 	}

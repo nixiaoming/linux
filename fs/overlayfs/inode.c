@@ -105,12 +105,22 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 			 * Lower hardlinks may be broken on copy up to different
 			 * upper files, so we cannot use the lower origin st_ino
 			 * for those different files, even for the same fs case.
+			 *
+			 * Similarly, several redirected dirs can point to the
+			 * same dir on a lower layer. With the "verify" feature,
+			 * we do not use the lower origin st_ino, if any parent
+			 * is redirected and we haven't verified that this
+			 * redirect is unique.
+			 *
 			 * With inodes index enabled, it is safe to use st_ino
-			 * of an indexed hardlinked origin. The index validates
-			 * that the upper hardlink is not broken.
+			 * of an indexed origin. The index validates that the
+			 * upper hardlink is not broken and that a redirected
+			 * dir is the only redirect to that origin.
 			 */
-			if (is_dir || lowerstat.nlink == 1 ||
-			    ovl_test_flag(OVL_INDEX, d_inode(dentry)))
+			if (ovl_test_flag(OVL_INDEX, d_inode(dentry)) ||
+			    ((is_dir || lowerstat.nlink == 1) &&
+			     (!ovl_verify(dentry->d_sb) ||
+			      !ovl_dentry_is_renamed(dentry))))
 				stat->ino = lowerstat.ino;
 
 			if (samefs)

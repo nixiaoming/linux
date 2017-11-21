@@ -33,7 +33,10 @@ enum ovl_flag {
 	OVL_IMPURE,
 	/* Non-merge dir that may contain whiteout entries */
 	OVL_WHITEOUTS,
+	/* Found index entry for origin inode */
 	OVL_INDEX,
+	/* Merge dir in path was redirected */
+	OVL_RENAMED,
 };
 
 /*
@@ -219,6 +222,7 @@ void ovl_dentry_set_upper_alias(struct dentry *dentry);
 bool ovl_redirect_dir(struct super_block *sb);
 const char *ovl_dentry_get_redirect(struct dentry *dentry);
 void ovl_dentry_set_redirect(struct dentry *dentry, const char *redirect);
+bool ovl_dentry_is_renamed(struct dentry *dentry);
 void ovl_inode_init(struct inode *inode, struct dentry *upperdentry,
 		    struct dentry *lowerdentry);
 void ovl_inode_update(struct inode *inode, struct dentry *upperdentry);
