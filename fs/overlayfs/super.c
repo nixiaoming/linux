@@ -45,6 +45,11 @@ module_param_named(index, ovl_index_def, bool, 0644);
 MODULE_PARM_DESC(ovl_index_def,
 		 "Default to on or off for the inodes index feature");
 
+static bool ovl_nfs_export_def = IS_ENABLED(CONFIG_OVERLAY_FS_NFS_EXPORT);
+module_param_named(verify, ovl_nfs_export_def, bool, 0644);
+MODULE_PARM_DESC(ovl_nfs_export_def,
+		 "Default to on or off for the NFS export feature");
+
 static void ovl_entry_stack_free(struct ovl_entry *oe)
 {
 	unsigned int i;
@@ -341,6 +346,9 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 		seq_printf(m, ",redirect_dir=%s", ofs->config.redirect_mode);
 	if (ofs->config.index != ovl_index_def)
 		seq_printf(m, ",index=%s", ofs->config.index ? "on" : "off");
+	if (ofs->config.nfs_export != ovl_nfs_export_def)
+		seq_printf(m, ",nfs_export=%s", ofs->config.nfs_export ?
+						"on" : "off");
 	return 0;
 }
 
@@ -373,6 +381,8 @@ enum {
 	OPT_REDIRECT_DIR,
 	OPT_INDEX_ON,
 	OPT_INDEX_OFF,
+	OPT_NFS_EXPORT_ON,
+	OPT_NFS_EXPORT_OFF,
 	OPT_ERR,
 };
 
@@ -384,6 +394,8 @@ static const match_table_t ovl_tokens = {
 	{OPT_REDIRECT_DIR,		"redirect_dir=%s"},
 	{OPT_INDEX_ON,			"index=on"},
 	{OPT_INDEX_OFF,			"index=off"},
+	{OPT_NFS_EXPORT_ON,		"nfs_export=on"},
+	{OPT_NFS_EXPORT_OFF,		"nfs_export=off"},
 	{OPT_ERR,			NULL}
 };
 
@@ -487,7 +499,19 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			break;
 
 		case OPT_INDEX_OFF:
+			/* NFS export depends on index */
 			config->index = false;
+			config->nfs_export = false;
+			break;
+
+		case OPT_NFS_EXPORT_ON:
+			/* NFS export depends on index */
+			config->index = true;
+			config->nfs_export = true;
+			break;
+
+		case OPT_NFS_EXPORT_OFF:
+			config->nfs_export = false;
 			break;
 
 		default:
@@ -504,9 +528,11 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			kfree(config->workdir);
 			config->workdir = NULL;
 		}
-		if (config->index != ovl_index_def) {
-			pr_info("overlayfs: option \"index\" is useless in a non-upper mount, ignore\n");
+		if (config->index != ovl_index_def ||
+		    config->nfs_export != ovl_nfs_export_def) {
+			pr_info("overlayfs: options \"index\" and \"nfs_export\" are useless in a non-upper mount, ignore\n");
 			config->index = ovl_index_def;
+			config->nfs_export = ovl_nfs_export_def;
 		}
 	}
 
@@ -707,7 +733,9 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	if (ofs->config.upperdir && ofs->config.index &&
 	    !ovl_can_decode_fh(path->dentry->d_sb)) {
 		ofs->config.index = false;
-		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off.\n", name);
+		ofs->config.nfs_export = false;
+		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off,nfs_export=off.\n",
+			name);
 	}
 
 	return 0;
@@ -975,7 +1003,8 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	if (err) {
 		ofs->noxattr = true;
 		ofs->config.index = false;
-		pr_warn("overlayfs: upper fs does not support xattr, falling back to index=off.\n");
+		ofs->config.nfs_export = false;
+		pr_warn("overlayfs: upper fs does not support xattr, falling back to index=off,nfs_export=off.\n");
 		err = 0;
 	} else {
 		vfs_removexattr(ofs->workdir, OVL_XATTR_OPAQUE);
@@ -985,7 +1014,8 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	if (ofs->config.index &&
 	    !ovl_can_decode_fh(ofs->workdir->d_sb)) {
 		ofs->config.index = false;
-		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
+		ofs->config.nfs_export = false;
+		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off,nfs_export=off.\n");
 	}
 
 out:
@@ -1146,6 +1176,8 @@ static struct ovl_entry *ovl_get_lowerstack(struct super_block *sb,
 	} else if (!ofs->config.upperdir && stacklen == 1) {
 		pr_err("overlayfs: at least 2 lowerdir are needed while upperdir nonexistent\n");
 		goto out_err;
+	} else if (ofs->config.nfs_export && ofs->config.upperdir && stacklen > 1) {
+		pr_warn("overlayfs: NFS export with multiple lower layers may copy up directories on lookup\n");
 	}
 
 	err = -ENOMEM;
@@ -1222,6 +1254,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_err;
 
 	ofs->config.index = ovl_index_def;
+	/* NFS export depends on index feature */
+	ofs->config.nfs_export = ovl_nfs_export_def && ovl_index_def;
 	err = ovl_parse_opt((char *) data, &ofs->config);
 	if (err)
 		goto out_err;
@@ -1276,9 +1310,11 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			sb->s_flags |= SB_RDONLY;
 	}
 
-	/* Show index=off/on in /proc/mounts for any of the reasons above */
-	if (!ofs->indexdir)
+	/* Show index=off,nfs_export=off in /proc/mounts if no indexdir */
+	if (!ofs->indexdir) {
 		ofs->config.index = false;
+		ofs->config.nfs_export = false;
+	}
 
 	/* Never override disk quota limits or use reserved space */
 	cap_lower(cred->cap_effective, CAP_SYS_RESOURCE);
