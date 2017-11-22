@@ -45,6 +45,11 @@ module_param_named(index, ovl_index_def, bool, 0644);
 MODULE_PARM_DESC(ovl_index_def,
 		 "Default to on or off for the inodes index feature");
 
+static bool ovl_verify_def = IS_ENABLED(CONFIG_OVERLAY_FS_VERIFY);
+module_param_named(verify, ovl_verify_def, bool, 0644);
+MODULE_PARM_DESC(ovl_verify_def,
+		 "Default to on or off for the verify feature");
+
 static void ovl_entry_stack_free(struct ovl_entry *oe)
 {
 	unsigned int i;
@@ -341,6 +346,8 @@ static int ovl_show_options(struct seq_file *m, struct dentry *dentry)
 		seq_printf(m, ",redirect_dir=%s", ofs->config.redirect_mode);
 	if (ofs->config.index != ovl_index_def)
 		seq_printf(m, ",index=%s", ofs->config.index ? "on" : "off");
+	if (ofs->config.verify != ovl_verify_def)
+		seq_printf(m, ",verify=%s", ofs->config.verify ? "on" : "off");
 	return 0;
 }
 
@@ -373,6 +380,8 @@ enum {
 	OPT_REDIRECT_DIR,
 	OPT_INDEX_ON,
 	OPT_INDEX_OFF,
+	OPT_VERIFY_ON,
+	OPT_VERIFY_OFF,
 	OPT_ERR,
 };
 
@@ -384,6 +393,8 @@ static const match_table_t ovl_tokens = {
 	{OPT_REDIRECT_DIR,		"redirect_dir=%s"},
 	{OPT_INDEX_ON,			"index=on"},
 	{OPT_INDEX_OFF,			"index=off"},
+	{OPT_VERIFY_ON,			"verify=on"},
+	{OPT_VERIFY_OFF,		"verify=off"},
 	{OPT_ERR,			NULL}
 };
 
@@ -487,7 +498,19 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			break;
 
 		case OPT_INDEX_OFF:
+			/* verify depends on index */
 			config->index = false;
+			config->verify = false;
+			break;
+
+		case OPT_VERIFY_ON:
+			/* verify depends on index */
+			config->index = true;
+			config->verify = true;
+			break;
+
+		case OPT_VERIFY_OFF:
+			config->verify = false;
 			break;
 
 		default:
@@ -504,9 +527,11 @@ static int ovl_parse_opt(char *opt, struct ovl_config *config)
 			kfree(config->workdir);
 			config->workdir = NULL;
 		}
-		if (config->index != ovl_index_def) {
-			pr_info("overlayfs: option \"index\" is useless in a non-upper mount, ignore\n");
+		if (config->index != ovl_index_def ||
+		    config->verify != ovl_verify_def) {
+			pr_info("overlayfs: options \"index\" and \"verify\" are useless in a non-upper mount, ignore\n");
 			config->index = ovl_index_def;
+			config->verify = ovl_verify_def;
 		}
 	}
 
@@ -707,7 +732,9 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	if (ofs->config.upperdir && ofs->config.index &&
 	    !ovl_can_decode_fh(path->dentry->d_sb)) {
 		ofs->config.index = false;
-		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off.\n", name);
+		ofs->config.verify = false;
+		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off,verify=off.\n",
+			name);
 	}
 
 	return 0;
@@ -975,7 +1002,8 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	if (err) {
 		ofs->noxattr = true;
 		ofs->config.index = false;
-		pr_warn("overlayfs: upper fs does not support xattr, falling back to index=off.\n");
+		ofs->config.verify = false;
+		pr_warn("overlayfs: upper fs does not support xattr, falling back to index=off,verify=off.\n");
 		err = 0;
 	} else {
 		vfs_removexattr(ofs->workdir, OVL_XATTR_OPAQUE);
@@ -985,7 +1013,8 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	if (ofs->config.index &&
 	    !ovl_can_decode_fh(ofs->workdir->d_sb)) {
 		ofs->config.index = false;
-		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
+		ofs->config.verify = false;
+		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off,verify=off.\n");
 	}
 
 out:
@@ -1146,6 +1175,8 @@ static struct ovl_entry *ovl_get_lowerstack(struct super_block *sb,
 	} else if (!ofs->config.upperdir && stacklen == 1) {
 		pr_err("overlayfs: at least 2 lowerdir are needed while upperdir nonexistent\n");
 		goto out_err;
+	} else if (ofs->config.verify && ofs->config.upperdir && stacklen > 1) {
+		pr_warn("overlayfs: option 'verify=on' cannot verify redirects from middle layer dirs\n");
 	}
 
 	err = -ENOMEM;
@@ -1222,6 +1253,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		goto out_err;
 
 	ofs->config.index = ovl_index_def;
+	/* verify depends on index */
+	ofs->config.verify = ovl_verify_def && ovl_index_def;
 	err = ovl_parse_opt((char *) data, &ofs->config);
 	if (err)
 		goto out_err;
@@ -1276,9 +1309,11 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			sb->s_flags |= SB_RDONLY;
 	}
 
-	/* Show index=off/on in /proc/mounts for any of the reasons above */
-	if (!ofs->indexdir)
+	/* Show index=off,verify=off in /proc/mounts if no indexdir */
+	if (!ofs->indexdir) {
 		ofs->config.index = false;
+		ofs->config.verify = false;
+	}
 
 	/* Never override disk quota limits or use reserved space */
 	cap_lower(cred->cap_effective, CAP_SYS_RESOURCE);
