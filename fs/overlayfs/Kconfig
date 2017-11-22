@@ -53,3 +53,21 @@ config OVERLAY_FS_INDEX
 	  outcomes.  However, mounting the same overlay with an old kernel
 	  read-write and then mounting it again with a new kernel, will have
 	  unexpected results.
+
+config OVERLAY_FS_VERIFY
+	bool "Overlayfs: turn on verify feature by default"
+	depends on OVERLAY_FS
+	depends on OVERLAY_FS_INDEX
+	help
+	  If this config option is enabled then overlay filesystems will use
+	  the inodes index dir to verify layers consistency by default.
+	  In this case, it is still possible to turn off consistency
+	  verification globally with the "verify=off" module option or on a
+	  filesystem instance basis with the "verify=off" mount option.
+
+	  The verify feature prevents multiple redirects to the same lower dir
+	  and prevents broken hardlinks from using the same inode number.
+
+	  Note, that verify feature is not backward compatible.  That is,
+	  mounting an overlay with verification index entries on a kernel
+	  that doesn't support this feature will have unexpected results.
