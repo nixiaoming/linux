@@ -719,7 +719,7 @@ static int ovl_fix_origin(struct dentry *dentry, struct dentry *lower,
 	if (err)
 		return err;
 
-	err = ovl_set_origin(dentry, lower, upper);
+	err = ovl_set_origin(dentry, lower, upper, false);
 	if (!err)
 		err = ovl_set_impure(dentry->d_parent, upper->d_parent);
 
