@@ -1068,6 +1068,7 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 			    struct path *upperpath)
 {
 	struct vfsmount *mnt = ofs->upper_mnt;
+	struct dentry *origin = oe->lowerstack[0].dentry;
 	int err;
 
 	err = mnt_want_write(mnt);
@@ -1075,8 +1076,11 @@ static int ovl_get_indexdir(struct ovl_fs *ofs, struct ovl_entry *oe,
 		return err;
 
 	/* Verify lower root is upper root origin */
-	err = ovl_verify_origin(upperpath->dentry, oe->lowerstack[0].dentry,
-				false, true);
+	/* TODO: fix verify root of nested root - export lower fh for root */
+	if (origin->d_sb->s_type == &ovl_fs_type)
+		err = 0;
+	else
+		err = ovl_verify_origin(upperpath->dentry, origin, false, true);
 	if (err) {
 		pr_err("overlayfs: failed to verify upper root origin\n");
 		goto out;
@@ -1115,6 +1119,7 @@ static int ovl_get_lower_layers(struct ovl_fs *ofs, struct path *stack,
 		goto out;
 	for (i = 0; i < numlower; i++) {
 		struct vfsmount *mnt;
+		struct super_block *sb;
 		dev_t dev;
 
 		err = get_anon_bdev(&dev);
@@ -1141,10 +1146,15 @@ static int ovl_get_lower_layers(struct ovl_fs *ofs, struct path *stack,
 		ofs->lower_layers[ofs->numlower].idx = i + 1;
 		ofs->numlower++;
 
+		sb = mnt->mnt_sb;
+		/* Are all layers of nested overlay on same sb? */
+		if (sb->s_type == &ovl_fs_type)
+			sb = ovl_same_sb(sb);
+
 		/* Check if all lower layers are on same sb */
 		if (i == 0)
-			ofs->same_sb = mnt->mnt_sb;
-		else if (ofs->same_sb != mnt->mnt_sb)
+			ofs->same_sb = sb;
+		else if (ofs->same_sb != sb)
 			ofs->same_sb = NULL;
 	}
 	err = 0;
@@ -1288,8 +1298,8 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 		sb->s_stack_depth = ofs->upper_mnt->mnt_sb->s_stack_depth;
 		sb->s_time_gran = ofs->upper_mnt->mnt_sb->s_time_gran;
-
 	}
+
 	oe = ovl_get_lowerstack(sb, ofs);
 	err = PTR_ERR(oe);
 	if (IS_ERR(oe))
@@ -1375,7 +1385,7 @@ static struct dentry *ovl_mount(struct file_system_type *fs_type, int flags,
 	return mount_nodev(fs_type, flags, raw_data, ovl_fill_super);
 }
 
-static struct file_system_type ovl_fs_type = {
+struct file_system_type ovl_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "overlay",
 	.mount		= ovl_mount,
