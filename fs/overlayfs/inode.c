@@ -113,7 +113,8 @@ int ovl_getattr(const struct path *path, struct kstat *stat,
 			    ovl_test_flag(OVL_INDEX, d_inode(dentry)))
 				stat->ino = lowerstat.ino;
 
-			if (samefs)
+			if (samefs &&
+			    realpath.dentry->d_sb->s_type != &ovl_fs_type)
 				WARN_ON_ONCE(stat->dev != lowerstat.dev);
 			else
 				stat->dev = ovl_get_pseudo_dev(dentry);

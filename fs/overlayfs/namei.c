@@ -176,18 +176,28 @@ invalid:
 struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct ovl_layer *layer)
 {
 	struct dentry *origin;
-	int bytes;
+	int bytes, type;
+	void *fid;
 
 	/*
 	 * Make sure that the stored uuid matches the uuid of the lower
-	 * layer where file handle will be decoded.
+	 * layer where file handle will be decoded. Pass ovl_fh struct to
+	 * nested overlayfs as is, lower overlayfs will match uuid to its
+	 * own layers.
 	 */
-	if (!uuid_equal(&fh->uuid, &layer->mnt->mnt_sb->s_uuid))
+	if (layer->mnt->mnt_sb->s_type == &ovl_fs_type) {
+		fid = fh;
+		type = OVL_FILEID;
+		bytes = fh->len;
+	} else if (uuid_equal(&fh->uuid, &layer->mnt->mnt_sb->s_uuid)) {
+		fid = fh->fid;
+		type = fh->type;
+		bytes = (fh->len - offsetof(struct ovl_fh, fid));
+	} else {
 		return NULL;
+	}
 
-	bytes = (fh->len - offsetof(struct ovl_fh, fid));
-	origin = exportfs_decode_fh(layer->mnt, (struct fid *)fh->fid,
-				    bytes >> 2, (int)fh->type,
+	origin = exportfs_decode_fh(layer->mnt, fid, (bytes + 3) >> 2, type,
 				    ovl_acceptable, layer);
 	if (IS_ERR(origin)) {
 		/*
