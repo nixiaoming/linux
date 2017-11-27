@@ -253,6 +253,9 @@ static ssize_t copy_event_to_user(struct fsnotify_group *group,
 		ffe = FANOTIFY_FE(event);
 		pad_data_len = round_event_data_len(ffe);
 		fanotify_event_metadata.event_len += pad_data_len;
+		/* Overload pid with cookie for RENAME event */
+		if (ffe->cookie)
+			fanotify_event_metadata.pid = ffe->cookie;
 	}
 
 	fd = fanotify_event_metadata.fd;
@@ -835,7 +838,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	group->fanotify_data.user = user;
 	atomic_inc(&user->fanotify_listeners);
 
-	oevent = fanotify_alloc_event(group, NULL, FS_Q_OVERFLOW, NULL, NULL);
+	oevent = fanotify_alloc_event(group, NULL, FS_Q_OVERFLOW, NULL, NULL, 0);
 	if (unlikely(!oevent)) {
 		fd = -ENOMEM;
 		goto out_destroy_group;

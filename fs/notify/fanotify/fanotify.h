@@ -35,6 +35,7 @@ struct fanotify_fid64 {
  */
 struct fanotify_file_event_info {
 	struct fanotify_event_info fae;
+	u32 cookie;
 	/*
 	 * For events reported to sb root record the file handle
 	 */
@@ -83,4 +84,4 @@ static inline struct fanotify_event_info *FANOTIFY_E(struct fsnotify_event *fse)
 struct fanotify_event_info *fanotify_alloc_event(struct fsnotify_group *group,
 						 struct inode *inode, u32 mask,
 						 struct path *path,
-						 const char *file_name);
+						 const char *file_name, u32 cookie);

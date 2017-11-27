@@ -181,7 +181,7 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 struct fanotify_event_info *fanotify_alloc_event(struct fsnotify_group *group,
 						 struct inode *inode, u32 mask,
 						 struct path *path,
-						 const char *file_name)
+						 const char *file_name, u32 cookie)
 {
 	struct fanotify_event_info *event;
 
@@ -230,6 +230,7 @@ struct fanotify_event_info *fanotify_alloc_event(struct fsnotify_group *group,
 		ffe->name_len = name_len;
 		if (name_len)
 			strcpy(ffe->name, file_name);
+		ffe->cookie = cookie;
 
 		ffe->fh.handle_type = FILEID_INVALID;
 		ffe->fh.handle_bytes = 0;
@@ -314,7 +315,7 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 	pr_debug("%s: group=%p inode=%p mask=%x\n", __func__, group, inode,
 		 mask);
 
-	event = fanotify_alloc_event(group, inode, mask, &path, file_name);
+	event = fanotify_alloc_event(group, inode, mask, &path, file_name, cookie);
 	if (unlikely(!event))
 		return -ENOMEM;
 
