@@ -19,9 +19,10 @@
 #include <linux/ratelimit.h>
 #include "overlayfs.h"
 
-int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
+int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen, int connectable)
 {
-	struct dentry *upper = ovl_dentry_upper(dentry);
+	struct dentry *upper = connectable ? ovl_dentry_upper_alias(dentry) :
+					     ovl_dentry_upper(dentry);
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct ovl_fh *fh = NULL;
 	int err;
@@ -38,7 +39,7 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 		goto fail;
 
 	/* TODO: encode non pure-upper by origin */
-	fh = ovl_encode_fh(upper, true);
+	fh = ovl_encode_fh(upper, true, connectable);
 
 	err = -EOVERFLOW;
 	if (fh->len > buflen)
@@ -66,7 +67,7 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 	if (WARN_ON(connectable && d_is_dir(dentry)))
 		connectable = 0;
 
-	res = ovl_d_to_fh(dentry, (char *)fid, len);
+	res = ovl_d_to_fh(dentry, (char *)fid, len, connectable);
 	if (res <= 0)
 		return FILEID_INVALID;
 
@@ -77,15 +78,45 @@ static int ovl_dentry_to_fh(struct dentry *dentry, u32 *fid, int *max_len,
 	return OVL_FILEID;
 }
 
+/* Find an alias of inode. If @dir is non NULL, find a child alias */
+static struct dentry *ovl_find_alias(struct inode *inode, struct inode *dir)
+{
+	struct dentry *dentry, *parent;
+	struct dentry *toput = NULL;
+
+	/* Parent inode is never provided when encoding a directory */
+	if (!dir || WARN_ON(!S_ISDIR(dir->i_mode) || S_ISDIR(inode->i_mode)))
+		return d_find_any_alias(inode);
+
+	/* Find an alias of inode who is a child of parent dir */
+	spin_lock(&inode->i_lock);
+	hlist_for_each_entry(dentry, &inode->i_dentry, d_u.d_alias) {
+		dget(dentry);
+		spin_unlock(&inode->i_lock);
+		if (toput)
+			dput(toput);
+		parent = dget_parent(dentry);
+		if (parent && parent->d_inode == dir) {
+			dput(parent);
+			return dentry;
+		}
+		dput(parent);
+		spin_lock(&inode->i_lock);
+		toput = dentry;
+	}
+	spin_unlock(&inode->i_lock);
+
+	if (toput)
+		dput(toput);
+
+	return NULL;
+}
+
 static int ovl_encode_inode_fh(struct inode *inode, u32 *fid, int *max_len,
 			       struct inode *parent)
 {
-	struct dentry *dentry;
+	struct dentry *dentry = ovl_find_alias(inode, parent);
 	int type;
-
-	/* TODO: encode connectable file handles */
-	if (parent)
-		return FILEID_INVALID;
 
 	/*
 	 * This is called from exportfs_encode_inode_fh(), which is called from
@@ -95,7 +126,6 @@ static int ovl_encode_inode_fh(struct inode *inode, u32 *fid, int *max_len,
 	 * TODO: add export_operations method dentry_to_fh() so we get the
 	 *       dentry instead of having to find it.
 	 */
-	dentry = d_find_any_alias(inode);
 	if (WARN_ON(!dentry))
 		return FILEID_INVALID;
 

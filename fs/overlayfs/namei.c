@@ -415,7 +415,7 @@ int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 	struct ovl_fh *fh;
 	int err;
 
-	fh = ovl_encode_fh(origin, is_upper);
+	fh = ovl_encode_fh(origin, is_upper, false);
 	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
 		goto fail;
@@ -611,7 +611,11 @@ int ovl_get_index_name(struct dentry *origin, struct qstr *name)
 	struct ovl_fh *fh;
 	char *n, *s;
 
-	fh = ovl_encode_fh(origin, false);
+	/*
+	 * We encode a non-connectable file handle for index, because the index
+	 * must be unqiue and invariant of lower hardlink aliases.
+	 */
+	fh = ovl_encode_fh(origin, false, false);
 	if (IS_ERR(fh))
 		return PTR_ERR(fh);
 
