@@ -37,8 +37,9 @@
  *  Non-indexed upper	|	U	|	U
  *  Indexed non-dir	|	U	|	L
  *  Lower non-dir	|	U (*)	|	L
- *  Indexed dir		|	L	|	L
- *  Lower dir		|	L	|	L
+ *  Indexed/lower dir:	|		|
+ *   ofs->numlower == 1	|	L	|	L
+ *   ofs->numlower >= 2	|	U (*)	|	U (*)
  *
  * U = upper file handle
  * L = lower file handle
@@ -53,12 +54,23 @@
  */
 static bool ovl_should_encode_origin(struct dentry *dentry, int connectable)
 {
+	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
+
 	/* Root dentry was born upper */
 	if (dentry == dentry->d_sb->s_root)
 		return false;
 
 	/* Decoding a connectable non-dir from origin is not implemented */
 	if (connectable)
+		return false;
+
+	/*
+	 * Decoding a merge dir, whose origin's parent may be on a different
+	 * lower layer then the overlay parent's origin is not implemented.
+	 * As a simple aproximation, we do not encode lower dir file handles
+	 * when overlay has multiple lower layers.
+	 */
+	if (d_is_dir(dentry) && ofs->numlower > 1)
 		return false;
 
 	/* Decoding a non-indexed upper from origin is not implemented */
