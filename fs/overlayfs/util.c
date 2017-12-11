@@ -229,14 +229,25 @@ bool ovl_dentry_has_upper_alias(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 
-	return oe->has_upper;
+	return (bool)oe->__upperalias;
 }
 
-void ovl_dentry_set_upper_alias(struct dentry *dentry)
+struct dentry *ovl_dentry_upper_alias(struct dentry *dentry)
 {
 	struct ovl_entry *oe = dentry->d_fsdata;
 
-	oe->has_upper = true;
+	return ovl_upperalias_dereference(oe);
+}
+
+void ovl_dentry_set_upper_alias(struct dentry *dentry, struct dentry *upper)
+{
+	struct ovl_entry *oe = dentry->d_fsdata;
+
+	/*
+	 * Make sure upperalias is consistent before making it visible
+	 */
+	smp_wmb();
+	oe->__upperalias = upper;
 }
 
 bool ovl_redirect_dir(struct super_block *sb)

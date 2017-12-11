@@ -897,7 +897,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	dentry->d_fsdata = oe;
 
 	if (upperdentry)
-		ovl_dentry_set_upper_alias(dentry);
+		ovl_dentry_set_upper_alias(dentry, dget(upperdentry));
 	else if (index)
 		upperdentry = dget(index);
 

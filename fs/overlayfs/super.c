@@ -63,6 +63,7 @@ static void ovl_dentry_release(struct dentry *dentry)
 	struct ovl_entry *oe = dentry->d_fsdata;
 
 	if (oe) {
+		dput(oe->__upperalias);
 		ovl_entry_stack_free(oe);
 		kfree_rcu(oe, rcu);
 	}
@@ -1322,7 +1323,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 	mntput(upperpath.mnt);
 	if (upperpath.dentry) {
-		oe->has_upper = true;
+		oe->__upperalias = dget(upperpath.dentry);
 		if (ovl_is_impuredir(upperpath.dentry))
 			ovl_set_flag(OVL_IMPURE, d_inode(root_dentry));
 	}

@@ -390,6 +390,7 @@ out_cleanup:
 struct ovl_copy_up_ctx {
 	struct dentry *parent;
 	struct dentry *dentry;
+	struct dentry *upper;
 	struct path lowerpath;
 	struct kstat stat;
 	struct kstat pstat;
@@ -425,12 +426,12 @@ static int ovl_link_up(struct ovl_copy_up_ctx *c)
 	if (!IS_ERR(upper)) {
 		err = ovl_do_link(ovl_dentry_upper(c->dentry), udir, upper,
 				  true);
-		dput(upper);
-
 		if (!err) {
 			/* Restore timestamps on parent (best effort) */
 			ovl_set_timestamps(upperdir, &c->pstat);
-			ovl_dentry_set_upper_alias(c->dentry);
+			ovl_dentry_set_upper_alias(c->dentry, upper);
+		} else {
+			dput(upper);
 		}
 	}
 	inode_unlock(udir);
@@ -593,6 +594,7 @@ static int ovl_copy_up_locked(struct ovl_copy_up_ctx *c)
 
 	inode = d_inode(c->dentry);
 	ovl_inode_update(inode, newdentry);
+	c->upper = newdentry;
 	if (S_ISDIR(inode->i_mode))
 		ovl_set_flag(OVL_WHITEOUTS, inode);
 
@@ -686,7 +688,7 @@ static int ovl_do_copy_up(struct ovl_copy_up_ctx *c)
 		ovl_set_timestamps(c->destdir, &c->pstat);
 		inode_unlock(udir);
 
-		ovl_dentry_set_upper_alias(c->dentry);
+		ovl_dentry_set_upper_alias(c->dentry, dget(c->upper));
 	}
 
 out:

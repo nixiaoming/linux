@@ -61,7 +61,7 @@ struct ovl_fs {
 struct ovl_entry {
 	union {
 		struct {
-			unsigned long has_upper;
+			struct dentry *__upperalias;
 			bool opaque;
 		};
 		struct rcu_head rcu;
@@ -93,4 +93,9 @@ static inline struct ovl_inode *OVL_I(struct inode *inode)
 static inline struct dentry *ovl_upperdentry_dereference(struct ovl_inode *oi)
 {
 	return READ_ONCE(oi->__upperdentry);
+}
+
+static inline struct dentry *ovl_upperalias_dereference(struct ovl_entry *oe)
+{
+	return READ_ONCE(oe->__upperalias);
 }
