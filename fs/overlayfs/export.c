@@ -26,11 +26,39 @@
  * copied up before NFS export was enabled. In that case we don't need to worry
  * about staying consistent with pre copy up encoding and we encode an upper
  * file handle.
+ *
+ * The following table summarizes the different file handle encodings used for
+ * different overlay object types with the subtree_check (i.e. connectable) and
+ * no_subtree_check NFS exports variants:
+ *
+ *  Object type		| subtree_check	| no_subtree_check
+ * --------------------------------------------------------
+ *  Pure upper		|	U	|	U
+ *  Non-indexed upper	|	U	|	U
+ *  Indexed non-dir	|	U	|	L
+ *  Lower non-dir	|	U (*)	|	L
+ *  Indexed dir		|	L	|	L
+ *  Lower dir		|	L	|	L
+ *
+ * U = upper file handle
+ * L = lower file handle
+ *
+ * The important thing to note is that within the same NFS export variant
+ * an overlay object encoding is invariant to copy up (i.e. Lower->Indexed).
+ *
+ * (*) If decoding an overlay dentry from origin is not implemented, we do not
+ * encode by lower inode, because if file gets copied up after we encoded it,
+ * we won't be able to decode the file handle. To mitigate those cases, we
+ * copy up the lower file first and then encode an upper file handle.
  */
-static bool ovl_should_encode_origin(struct dentry *dentry)
+static bool ovl_should_encode_origin(struct dentry *dentry, int connectable)
 {
 	/* Root dentry was born upper */
 	if (dentry == dentry->d_sb->s_root)
+		return false;
+
+	/* Decoding a connectable non-dir from origin is not implemented */
+	if (connectable)
 		return false;
 
 	/* Decoding a non-indexed upper from origin is not implemented */
@@ -41,17 +69,44 @@ static bool ovl_should_encode_origin(struct dentry *dentry)
 	return true;
 }
 
+static int ovl_encode_maybe_copy_up(struct dentry *dentry)
+{
+	int err;
+
+	if (ovl_dentry_upper(dentry) && ovl_dentry_has_upper_alias(dentry))
+		return 0;
+
+	err = ovl_want_write(dentry);
+	if (err)
+		return err;
+
+	err = ovl_copy_up(dentry);
+
+	ovl_drop_write(dentry);
+	return err;
+}
+
 int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen, int connectable)
 {
-	struct dentry *upper = connectable ? ovl_dentry_upper_alias(dentry) :
-					     ovl_dentry_upper(dentry);
+	struct dentry *upper;
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct ovl_fh *fh = NULL;
 	int err;
 
-	if (!ovl_should_encode_origin(dentry))
-		origin = NULL;
+	/*
+	 * If we should not encode a lower file handle, copy up and encode an
+	 * upper file handle.
+	 */
+	if (!ovl_should_encode_origin(dentry, connectable)) {
+		err = ovl_encode_maybe_copy_up(dentry);
+		if (err)
+			goto fail;
 
+		origin = NULL;
+	}
+
+	upper = connectable ? ovl_dentry_upper_alias(dentry) :
+			      ovl_dentry_upper(dentry);
 	err = -EACCES;
 	if (!upper || origin)
 		goto fail;
