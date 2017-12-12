@@ -292,16 +292,14 @@ static int ovl_lookup_layer(struct dentry *base, struct ovl_lookup_data *d,
 
 
 static int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
-			       struct ovl_path *lower, unsigned int numlower,
+			       struct ovl_layer *layers, unsigned int numlayers,
 			       struct ovl_path **stackp)
 {
-	struct vfsmount *mnt;
 	struct dentry *origin = NULL;
 	int i;
 
-	for (i = 0; i < numlower; i++) {
-		mnt = lower[i].layer->mnt;
-		origin = ovl_decode_fh(fh, mnt);
+	for (i = 0; i < numlayers; i++) {
+		origin = ovl_decode_fh(fh, layers[i].mnt);
 		if (origin)
 			break;
 	}
@@ -321,7 +319,7 @@ static int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
 		dput(origin);
 		return -ENOMEM;
 	}
-	**stackp = (struct ovl_path){.dentry = origin, .layer = lower[i].layer};
+	**stackp = (struct ovl_path){.dentry = origin, .layer = &layers[i]};
 
 	return 0;
 
@@ -333,8 +331,7 @@ invalid:
 	return -EIO;
 }
 
-static int ovl_check_origin(struct dentry *upperdentry,
-			    struct ovl_path *lower, unsigned int numlower,
+static int ovl_check_origin(struct ovl_fs *ofs, struct dentry *upperdentry,
 			    struct ovl_path **stackp, unsigned int *ctrp)
 {
 	struct ovl_fh *fh = ovl_get_origin_fh(upperdentry);
@@ -343,7 +340,8 @@ static int ovl_check_origin(struct dentry *upperdentry,
 	if (IS_ERR_OR_NULL(fh))
 		return PTR_ERR(fh);
 
-	err = ovl_check_origin_fh(fh, upperdentry, lower, numlower, stackp);
+	err = ovl_check_origin_fh(fh, upperdentry, ofs->lower_layers,
+				  ofs->numlower, stackp);
 	kfree(fh);
 
 	if (err) {
@@ -423,8 +421,7 @@ fail:
  * OVL_XATTR_ORIGIN and that origin file handle can be decoded to lower path.
  * Return 0 on match, -ESTALE on mismatch or stale origin, < 0 on error.
  */
-int ovl_verify_index(struct dentry *index, struct ovl_path *lower,
-		     unsigned int numlower)
+int ovl_verify_index(struct ovl_fs *ofs, struct dentry *index)
 {
 	struct ovl_fh *fh = NULL;
 	size_t len;
@@ -471,7 +468,8 @@ int ovl_verify_index(struct dentry *index, struct ovl_path *lower,
 	if (err)
 		goto fail;
 
-	err = ovl_check_origin_fh(fh, index, lower, numlower, &stack);
+	err = ovl_check_origin_fh(fh, index, ofs->lower_layers,
+				  ofs->numlower, &stack);
 	if (err)
 		goto fail;
 
@@ -689,8 +687,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			 * number - it's the same as if we held a reference
 			 * to a dentry in lower layer that was moved under us.
 			 */
-			err = ovl_check_origin(upperdentry, roe->lowerstack,
-					       roe->numlower, &stack, &ctr);
+			err = ovl_check_origin(ofs, upperdentry, &stack, &ctr);
 			if (err)
 				goto out_put_upper;
 		}
