@@ -105,6 +105,98 @@ static int ovl_encode_inode_fh(struct inode *inode, u32 *fid, int *max_len,
 	return type;
 }
 
+/*
+ * Find or instantiate an overlay dentry from real dentries.
+ */
+static struct dentry *ovl_obtain_alias(struct super_block *sb,
+				       struct dentry *upper,
+				       struct ovl_path *lowerpath)
+{
+	struct inode *inode;
+	struct dentry *dentry;
+	struct ovl_entry *oe;
+
+	/* TODO: obtain non pure-upper */
+	if (lowerpath)
+		return ERR_PTR(-EIO);
+
+	inode = ovl_get_inode(sb, dget(upper), NULL, NULL, 0);
+	if (IS_ERR(inode)) {
+		dput(upper);
+		return ERR_CAST(inode);
+	}
+
+	dentry = d_obtain_alias(inode);
+	if (IS_ERR(dentry) || dentry->d_fsdata)
+		return dentry;
+
+	oe = ovl_alloc_entry(0);
+	if (!oe) {
+		dput(dentry);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	dentry->d_fsdata = oe;
+	ovl_dentry_set_upper_alias(dentry, dget(upper));
+
+	return dentry;
+}
+
+static struct dentry *ovl_upper_fh_to_d(struct super_block *sb,
+					struct ovl_fh *fh)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+	struct ovl_layer layer = { .mnt = ofs->upper_mnt };
+	struct dentry *dentry;
+	struct dentry *upper;
+
+	if (!ofs->upper_mnt)
+		return ERR_PTR(-EACCES);
+
+	upper = ovl_decode_fh(fh, &layer);
+	if (IS_ERR_OR_NULL(upper))
+		return upper;
+
+	dentry = ovl_obtain_alias(sb, upper, NULL);
+	dput(upper);
+
+	return dentry;
+}
+
+static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
+				       int fh_len, int fh_type)
+{
+	struct dentry *dentry = NULL;
+	struct ovl_fh *fh = (struct ovl_fh *) fid;
+	int len = fh_len << 2;
+	unsigned int flags = 0;
+	int err;
+
+	err = -EINVAL;
+	if (fh_type != OVL_FILEID)
+		goto out_err;
+
+	err = ovl_check_fh_len(fh, len);
+	if (err)
+		goto out_err;
+
+	/* TODO: decode non-upper */
+	flags = fh->flags;
+	if (flags & OVL_FH_FLAG_PATH_UPPER)
+		dentry = ovl_upper_fh_to_d(sb, fh);
+	err = PTR_ERR(dentry);
+	if (IS_ERR(dentry) && err != -ESTALE)
+		goto out_err;
+
+	return dentry;
+
+out_err:
+	pr_warn_ratelimited("overlayfs: failed to decode file handle (len=%d, type=%d, flags=%x, err=%i)\n",
+			    len, fh_type, flags, err);
+	return ERR_PTR(err);
+}
+
 const struct export_operations ovl_export_operations = {
 	.encode_fh      = ovl_encode_inode_fh,
+	.fh_to_dentry	= ovl_fh_to_dentry,
 };
