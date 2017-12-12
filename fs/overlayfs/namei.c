@@ -188,8 +188,14 @@ static struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct vfsmount *mnt)
 				    bytes >> 2, (int)fh->type,
 				    ovl_acceptable, mnt);
 	if (IS_ERR(origin)) {
-		/* Treat stale file handle as "origin unknown" */
-		if (origin == ERR_PTR(-ESTALE))
+		/*
+		 * Treat stale file handle to lower file as "origin unknown".
+		 * upper file handle could become stale when upper file is
+		 * unlinked and this information is needed to handle stale
+		 * index entries correctly.
+		 */
+		if (origin == ERR_PTR(-ESTALE) &&
+		    !(fh->flags & OVL_FH_FLAG_PATH_UPPER))
 			origin = NULL;
 		return origin;
 	}
@@ -533,6 +539,14 @@ int ovl_verify_index(struct ovl_fs *ofs, struct dentry *index)
 	upper = ovl_index_upper(ofs, index);
 	if (IS_ERR(upper)) {
 		err = PTR_ERR(upper);
+		/*
+		 * Invalid index entries and stale non-dir index entries need
+		 * to be removed.  When dir index has a stale 'upper' xattr,
+		 * we assume that upper dir was removed and we treat the dir
+		 * index as orphan entry that needs to be whited out.
+		 */
+		if (err == -ESTALE)
+			goto orphan;
 		if (err)
 			goto fail;
 	}
@@ -549,7 +563,7 @@ int ovl_verify_index(struct ovl_fs *ofs, struct dentry *index)
 			goto fail;
 
 		if (ovl_get_nlink(origin.dentry, index, 0) == 0)
-			err = -ENOENT;
+			goto orphan;
 	}
 
 out:
@@ -560,6 +574,13 @@ out:
 fail:
 	pr_warn_ratelimited("overlayfs: failed to verify index (%pd2, ftype=%x, err=%i)\n",
 			    index, d_inode(index)->i_mode & S_IFMT, err);
+	goto out;
+
+orphan:
+	pr_warn_ratelimited("overlayfs: orphan index entry (%pd2, ftype=%x, nlink=%u)\n",
+			    index, d_inode(index)->i_mode & S_IFMT,
+			    d_inode(index)->i_nlink);
+	err = -ENOENT;
 	goto out;
 }
 
