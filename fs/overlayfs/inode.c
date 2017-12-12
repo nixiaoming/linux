@@ -625,14 +625,14 @@ static bool ovl_verify_inode(struct inode *inode, struct dentry *lowerdentry,
 	return true;
 }
 
-struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
-			    struct dentry *index)
+struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
+			    struct dentry *lowerdentry, struct dentry *index,
+			    unsigned int numlower)
 {
-	struct dentry *lowerdentry = ovl_dentry_lower(dentry);
 	struct inode *realinode = upperdentry ? d_inode(upperdentry) : NULL;
 	struct inode *inode;
 	/* Already indexed or could be indexed on copy up? */
-	bool indexed = (index || (ovl_indexdir(dentry->d_sb) && !upperdentry));
+	bool indexed = (index || (ovl_indexdir(sb) && !upperdentry));
 
 	if (WARN_ON(upperdentry && indexed && !lowerdentry))
 		return ERR_PTR(-EIO);
@@ -651,7 +651,7 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
 						      upperdentry);
 		unsigned int nlink;
 
-		inode = iget5_locked(dentry->d_sb, (unsigned long) key,
+		inode = iget5_locked(sb, (unsigned long) key,
 				     ovl_inode_test, ovl_inode_set, key);
 		if (!inode)
 			goto out_nomem;
@@ -674,7 +674,7 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
 				      realinode->i_nlink);
 		set_nlink(inode, nlink);
 	} else {
-		inode = new_inode(dentry->d_sb);
+		inode = new_inode(sb);
 		if (!inode)
 			goto out_nomem;
 	}
@@ -686,9 +686,7 @@ struct inode *ovl_get_inode(struct dentry *dentry, struct dentry *upperdentry,
 
 	/* Check for non-merge dir that may have whiteouts */
 	if (S_ISDIR(realinode->i_mode)) {
-		struct ovl_entry *oe = dentry->d_fsdata;
-
-		if (((upperdentry && lowerdentry) || oe->numlower > 1) ||
+		if (((upperdentry && lowerdentry) || numlower > 1) ||
 		    ovl_check_origin_xattr(upperdentry ?: lowerdentry)) {
 			ovl_set_flag(OVL_WHITEOUTS, inode);
 		}
