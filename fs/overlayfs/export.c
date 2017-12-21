@@ -265,6 +265,11 @@ static struct dentry *ovl_obtain_alias(struct super_block *sb,
 	return dentry;
 }
 
+static struct dentry *ovl_dentry_real_at(struct dentry *dentry, bool is_upper)
+{
+	return is_upper ? ovl_dentry_upper(dentry) : ovl_dentry_lower(dentry);
+}
+
 /*
  * Lookup a child overlay dentry whose real dentry is @real.
  * If @is_upper is true then we lookup a child overlay dentry with the same
@@ -278,8 +283,6 @@ static struct dentry *ovl_lookup_real_one(struct dentry *parent,
 	int err;
 
 	/* TODO: use index when looking up by lower real dentry */
-	if (!is_upper)
-		return ERR_PTR(-EACCES);
 
 	/* Lookup overlay dentry by real name */
 	this = lookup_one_len_unlocked(name->name, parent, name->len);
@@ -290,7 +293,7 @@ static struct dentry *ovl_lookup_real_one(struct dentry *parent,
 		dput(this);
 		err = -ENOENT;
 		goto fail;
-	} else if (ovl_dentry_upper(this) != real) {
+	} else if (ovl_dentry_real_at(this, is_upper) != real) {
 		dput(this);
 		err = -ESTALE;
 		goto fail;
@@ -315,15 +318,12 @@ static struct dentry *ovl_lookup_real(struct super_block *sb,
 	struct dentry *connected;
 	int err = 0;
 
-	/* TODO: use index when looking up by lower real dentry */
-	if (!is_upper)
-		return ERR_PTR(-EACCES);
-
 	connected = dget(sb->s_root);
 	while (!err) {
 		struct dentry *next, *this;
 		struct dentry *parent = NULL;
-		struct dentry *real_connected = ovl_dentry_upper(connected);
+		struct dentry *real_connected = ovl_dentry_real_at(connected,
+								   is_upper);
 
 		if (real_connected == real)
 			break;
@@ -392,17 +392,13 @@ static struct dentry *ovl_get_dentry(struct super_block *sb,
 	if (!upper && !d_is_dir(real))
 		return ovl_obtain_alias(sb, NULL, lowerpath, index);
 
-	/* TODO: lookup connected dir from real lower dir */
-	if (!upper)
-		return ERR_PTR(-EACCES);
-
 	/*
-	 * If real upper dentry is connected and hashed, get a connected
-	 * overlay dentry with the same path as the real upper dentry.
+	 * If real dentry is connected and hashed, get a connected overlay
+	 * dentry whose real dentry is @real.
 	 */
-	if (!(upper->d_flags & DCACHE_DISCONNECTED) && !d_unhashed(upper)) {
-		return ovl_lookup_real(sb, upper, true);
-	} else if (d_is_dir(upper)) {
+	if (!(real->d_flags & DCACHE_DISCONNECTED) && !d_unhashed(real)) {
+		return ovl_lookup_real(sb, real, !!upper);
+	} else if (d_is_dir(real)) {
 		/* Removed empty directory? */
 		return ERR_PTR(-ENOENT);
 	}
