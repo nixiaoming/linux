@@ -271,6 +271,30 @@ static struct dentry *ovl_dentry_real_at(struct dentry *dentry, bool is_upper)
 }
 
 /*
+ * Lookup an overlay dentry by origin inode.
+ */
+static struct dentry *ovl_lookup_real_origin(struct super_block *sb,
+					     struct dentry *origin)
+{
+	struct dentry *this;
+	struct inode *inode;
+
+	inode = ovl_lookup_inode(sb, origin);
+	if (!inode)
+		return NULL;
+
+	this = d_find_any_alias(inode);
+
+	if (WARN_ON(ovl_dentry_lower(this) != origin)) {
+		dput(this);
+		this = ERR_PTR(-EIO);
+	}
+
+	iput(inode);
+	return this;
+}
+
+/*
  * Lookup a child overlay dentry whose real dentry is @real.
  * If @is_upper is true then we lookup a child overlay dentry with the same
  * name as the real dentry. Otherwise, we need to consult index for lookup.
@@ -320,7 +344,7 @@ static struct dentry *ovl_lookup_real(struct super_block *sb,
 
 	connected = dget(sb->s_root);
 	while (!err) {
-		struct dentry *next, *this;
+		struct dentry *next, *this = NULL;
 		struct dentry *parent = NULL;
 		struct dentry *real_connected = ovl_dentry_real_at(connected,
 								   is_upper);
@@ -332,6 +356,25 @@ static struct dentry *ovl_lookup_real(struct super_block *sb,
 		/* find the topmost dentry not yet connected */
 		for (;;) {
 			parent = dget_parent(next);
+
+			/*
+			 * Lookup a matching overlay dentry in inode/dentry
+			 * cache by origin inode to shortcut searching the
+			 * index for backward path walk up to layer root.
+			 * TODO: use index when looking up by origin inode.
+			 */
+			if (!is_upper) {
+				this = ovl_lookup_real_origin(sb, next);
+				if (this) {
+					if (!IS_ERR(this)) {
+						dput(connected);
+						connected = this;
+					} else {
+						err = PTR_ERR(this);
+					}
+					break;
+				}
+			}
 
 			if (real_connected == parent)
 				break;
@@ -349,7 +392,7 @@ static struct dentry *ovl_lookup_real(struct super_block *sb,
 			next = parent;
 		}
 
-		if (!err) {
+		if (!err && !this) {
 			this = ovl_lookup_real_one(connected, next, is_upper);
 			if (!IS_ERR(this)) {
 				dput(connected);
