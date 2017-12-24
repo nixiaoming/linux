@@ -441,7 +441,7 @@ fail:
 }
 
 /* Get upper dentry from index */
-static struct dentry *ovl_index_upper(struct ovl_fs *ofs, struct dentry *index)
+struct dentry *ovl_index_upper(struct ovl_fs *ofs, struct dentry *index)
 {
 	struct ovl_fh *fh;
 	struct ovl_layer layer = { .mnt = ofs->upper_mnt };
