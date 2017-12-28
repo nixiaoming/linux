@@ -26,11 +26,46 @@
  * copied up before NFS export was enabled. In that case we don't need to worry
  * about staying consistent with pre copy up encoding and we encode an upper
  * file handle.
+ *
+ * The following table summarizes the different file handle encodings used for
+ * different overlay object types with overlay configuration of single and
+ * multiple lower layers:
+ *
+ *  Object type		| Single lower	| Multiple lower
+ * --------------------------------------------------------
+ *  Pure upper		|	U	|	U
+ *  Non-indexed upper	|	U	|	U
+ *  Indexed non-dir	|	L	|	L
+ *  Lower non-dir	|	L	|	L
+ *  Indexed directory	|	L	|	U
+ *  Lower directory	|	L	|	U (*)
+ *
+ * U = upper file handle
+ * L = lower file handle
+ *
+ * The important thing to note is that within the same overlay configuration
+ * an overlay object encoding is invariant to copy up (i.e. Lower->Indexed).
+ *
+ * (*) If decoding an overlay dir from origin is not implemented, we do not
+ * encode by lower inode, because if file gets copied up after we encoded it,
+ * we won't be able to decode the file handle. To mitigate this case, we copy
+ * up the lower dir first and then encode an upper dir file handle.
  */
 static bool ovl_should_encode_origin(struct dentry *dentry)
 {
+	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
+
 	/* Root dentry was born upper */
 	if (dentry == dentry->d_sb->s_root)
+		return false;
+
+	/*
+	 * Decoding a merge dir, whose origin's parent may be on a different
+	 * lower layer then the overlay parent's origin is not implemented.
+	 * As a simple aproximation, we do not encode lower dir file handles
+	 * when overlay has multiple lower layers.
+	 */
+	if (d_is_dir(dentry) && ofs->numlower > 1)
 		return false;
 
 	/* Decoding a non-indexed upper from origin is not implemented */
@@ -41,16 +76,43 @@ static bool ovl_should_encode_origin(struct dentry *dentry)
 	return true;
 }
 
+static int ovl_encode_maybe_copy_up(struct dentry *dentry)
+{
+	int err;
+
+	if (ovl_dentry_upper(dentry))
+		return 0;
+
+	err = ovl_want_write(dentry);
+	if (err)
+		return err;
+
+	err = ovl_copy_up(dentry);
+
+	ovl_drop_write(dentry);
+	return err;
+}
+
 int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
-	struct dentry *upper = ovl_dentry_upper(dentry);
+	struct dentry *upper;
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct ovl_fh *fh = NULL;
 	int err;
 
-	if (!ovl_should_encode_origin(dentry))
-		origin = NULL;
+	/*
+	 * If we should not encode a lower dir file handle, copy up and encode
+	 * an upper dir file handle.
+	 */
+	if (!ovl_should_encode_origin(dentry)) {
+		err = ovl_encode_maybe_copy_up(dentry);
+		if (err)
+			goto fail;
 
+		origin = NULL;
+	}
+
+	upper = ovl_dentry_upper(dentry);
 	err = -EACCES;
 	if (!upper || origin)
 		goto fail;
