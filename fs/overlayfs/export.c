@@ -19,6 +19,28 @@
 #include <linux/ratelimit.h>
 #include "overlayfs.h"
 
+/*
+ * We only need to encode origin if there is a chance that the same object was
+ * encoded pre copy up and then we need to stay consistent with the same
+ * encoding also after copy up. If non-pure upper is not indexed, then it was
+ * copied up before NFS export was enabled. In that case we don't need to worry
+ * about staying consistent with pre copy up encoding and we encode an upper
+ * file handle.
+ */
+static bool ovl_should_encode_origin(struct dentry *dentry)
+{
+	/* Root dentry was born upper */
+	if (dentry == dentry->d_sb->s_root)
+		return false;
+
+	/* Decoding a non-indexed upper from origin is not implemented */
+	if (ovl_dentry_upper(dentry) &&
+	    !ovl_test_flag(OVL_INDEX, d_inode(dentry)))
+		return false;
+
+	return true;
+}
+
 int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
 	struct dentry *upper = ovl_dentry_upper(dentry);
@@ -26,11 +48,7 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	struct ovl_fh *fh = NULL;
 	int err;
 
-	/*
-	 * Overlay root dir inode is encoded as an upper file handle upper,
-	 * because root dir dentry is born upper and not indexed.
-	 */
-	if (dentry == dentry->d_sb->s_root)
+	if (!ovl_should_encode_origin(dentry))
 		origin = NULL;
 
 	err = -EACCES;
