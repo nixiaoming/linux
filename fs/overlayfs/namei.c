@@ -312,9 +312,9 @@ static int ovl_lookup_layer(struct dentry *base, struct ovl_lookup_data *d,
 }
 
 
-static int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
-			       struct ovl_layer *layers, unsigned int numlayers,
-			       struct ovl_path **stackp)
+int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
+			struct ovl_layer *layers, unsigned int numlayers,
+			struct ovl_path **stackp)
 {
 	struct dentry *origin = NULL;
 	int i;
@@ -330,7 +330,7 @@ static int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
 	else if (IS_ERR(origin))
 		return PTR_ERR(origin);
 
-	if (!ovl_is_whiteout(upperdentry) &&
+	if (upperdentry && !ovl_is_whiteout(upperdentry) &&
 	    ((d_inode(origin)->i_mode ^ d_inode(upperdentry)->i_mode) & S_IFMT))
 		goto invalid;
 

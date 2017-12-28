@@ -256,6 +256,9 @@ static inline bool ovl_is_impuredir(struct dentry *dentry)
 /* namei.c */
 int ovl_check_fh_len(struct ovl_fh *fh, int fh_len);
 struct dentry *ovl_decode_fh(struct ovl_fh *fh, struct ovl_layer *layer);
+int ovl_check_origin_fh(struct ovl_fh *fh, struct dentry *upperdentry,
+			struct ovl_layer *layers, unsigned int numlayers,
+			struct ovl_path **stackp);
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		      bool is_upper, bool *set);
 int ovl_verify_index(struct ovl_fs *ofs, struct dentry *index);
