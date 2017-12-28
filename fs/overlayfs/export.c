@@ -95,7 +95,6 @@ static int ovl_encode_maybe_copy_up(struct dentry *dentry)
 
 int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
-	struct dentry *upper;
 	struct dentry *origin = ovl_dentry_lower(dentry);
 	struct ovl_fh *fh = NULL;
 	int err;
@@ -112,13 +111,8 @@ int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 		origin = NULL;
 	}
 
-	upper = ovl_dentry_upper(dentry);
-	err = -EACCES;
-	if (!upper || origin)
-		goto fail;
-
-	/* TODO: encode non pure-upper by origin */
-	fh = ovl_encode_fh(upper, true);
+	/* Encode an upper or origin file handle */
+	fh = ovl_encode_fh(origin ?: ovl_dentry_upper(dentry), !origin);
 
 	err = -EOVERFLOW;
 	if (fh->len > buflen)
