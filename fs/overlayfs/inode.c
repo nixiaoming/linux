@@ -639,15 +639,17 @@ static bool ovl_verify_inode(struct inode *inode, struct dentry *lowerdentry,
 	return true;
 }
 
-struct inode *ovl_lookup_inode(struct super_block *sb, struct dentry *origin)
+struct inode *ovl_lookup_inode(struct super_block *sb, struct dentry *real,
+			       bool is_upper)
 {
-	struct inode *inode, *key = d_inode(origin);
+	struct inode *inode, *key = d_inode(real);
 
 	inode = ilookup5(sb, (unsigned long) key, ovl_inode_test, key);
 	if (!inode)
 		return NULL;
 
-	if (!ovl_verify_inode(inode, origin, NULL)) {
+	if (!ovl_verify_inode(inode, is_upper ? NULL : real,
+			      is_upper ? real : NULL)) {
 		iput(inode);
 		return ERR_PTR(-ESTALE);
 	}
