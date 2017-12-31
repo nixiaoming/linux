@@ -343,13 +343,13 @@ static int ovl_verify_origin_fh(struct dentry *dentry, const struct ovl_fh *fh)
 /*
  * Verify that an inode matches the origin file handle stored in upper inode.
  *
- * If @set is true and there is no stored file handle, encode and store origin
- * file handle in OVL_XATTR_ORIGIN.
+ * If @set is non-null and there is no stored file handle, set *@set to true
+ * and try to encode and store origin file handle in OVL_XATTR_ORIGIN.
  *
- * Return 0 on match, -ESTALE on mismatch, < 0 on error.
+ * Return 0 on match or successful set, -ESTALE on mismatch, < 0 on error.
  */
 int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
-		      bool is_upper, bool set)
+		      bool is_upper, bool *set)
 {
 	struct inode *inode;
 	struct ovl_fh *fh;
@@ -361,8 +361,11 @@ int ovl_verify_origin(struct dentry *dentry, struct dentry *origin,
 		goto fail;
 
 	err = ovl_verify_origin_fh(dentry, fh);
-	if (set && err == -ENODATA)
+	if (set && err == -ENODATA) {
+		*set = true;
 		err = ovl_do_setxattr(dentry, OVL_XATTR_ORIGIN, fh, fh->len, 0);
+	}
+
 	if (err)
 		goto fail;
 
@@ -673,6 +676,27 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 
 		if (!this)
 			continue;
+
+		/*
+		 * If no origin fh is stored in upper of a merge dir, store fh
+		 * of upper most lower dir and set upper parent "impure".
+		 */
+		if (upperdentry && !ctr) {
+			bool set = false;
+
+			err = ovl_verify_origin(upperdentry, this, false, &set);
+			if (set && !err) {
+				err = ovl_set_impure(dentry->d_parent,
+						     upperdentry->d_parent);
+			}
+			if (set && err)
+				goto out_put;
+
+			/*
+			 * Ignore merge dir origin mismatch, which may have
+			 * been caused by copying layers
+			 */
+		}
 
 		stack[ctr].dentry = this;
 		stack[ctr].layer = lower.layer;
