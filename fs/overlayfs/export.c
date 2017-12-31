@@ -257,15 +257,24 @@ fail:
 	return ERR_PTR(err);
 }
 
+static struct dentry *ovl_lookup_real(struct super_block *sb,
+				      struct dentry *real, bool is_upper);
+
 /*
  * Lookup an indexed or hashed overlay dentry by real inode.
  */
 static struct dentry *ovl_lookup_real_inode(struct super_block *sb,
 					    struct dentry *real, bool is_upper)
 {
+	struct ovl_fs *ofs = sb->s_fs_info;
+	struct dentry *index = NULL;
 	struct dentry *this = NULL;
 	struct inode *inode;
 
+	/*
+	 * Decoding upper dir from index is expensive, so first try to lookup
+	 * overlay dentry in inode/dcache.
+	 */
 	inode = ovl_lookup_inode(sb, real, is_upper);
 	if (IS_ERR(inode))
 		return ERR_CAST(inode);
@@ -274,7 +283,35 @@ static struct dentry *ovl_lookup_real_inode(struct super_block *sb,
 		iput(inode);
 	}
 
-	/* TODO: use index when looking up by origin inode */
+	/*
+	 * For decoded lower dir file handle, lookup index by origin to check
+	 * if lower dir was copied up and and/or removed.
+	 */
+	if (!this && !is_upper && !WARN_ON(!d_is_dir(real))) {
+		index = ovl_lookup_index(ofs, NULL, real, false);
+		if (IS_ERR(index))
+			return index;
+	}
+
+	/* Get connected upper overlay dir from index */
+	if (index) {
+		struct dentry *upper = ovl_index_upper(ofs, index);
+
+		dput(index);
+		if (IS_ERR_OR_NULL(upper))
+			return upper;
+
+		/*
+		 * ovl_lookup_real(is_upper=false) may call recursively once to
+		 * ovl_lookup_real(is_upper=true). The first level call walks
+		 * back lower parents to the topmost indexed parent. The second
+		 * recursive call walks back from indexed upper to the topmost
+		 * connected/hashed upper parent (or up to root).
+		 */
+		this = ovl_lookup_real(sb, upper, true);
+		dput(upper);
+	}
+
 	if (!this)
 		return NULL;
 
