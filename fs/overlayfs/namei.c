@@ -721,9 +721,15 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 				goto out_put;
 
 			/*
-			 * Ignore merge dir origin mismatch, which may have
-			 * been caused by copying layers
+			 * When "verify" feature is enabled, do not merge with a
+			 * lower dir that does not match origin xattr. When
+			 * "verify" feature is disabled, ignore merge dir origin
+			 * mismatch, which may indicate that layers were copied.
 			 */
+			if (err && ovl_verify(dentry->d_sb)) {
+				dput(this);
+				break;
+			}
 		}
 
 		stack[ctr].dentry = this;
