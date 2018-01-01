@@ -1595,6 +1595,14 @@ static void update_ovl_d_inode_times(struct dentry *dentry, bool rcu)
 	}
 }
 
+void update_ovl_inode_times(struct inode *inode)
+{
+	struct dentry *alias = d_find_any_alias(inode);
+
+	if (alias)
+		update_ovl_d_inode_times(alias, false);
+}
+
 /*
  * With relative atime, only update atime if the previous atime is
  * earlier than either the ctime or mtime or if at least a day has
@@ -1876,8 +1884,6 @@ int file_update_time(struct file *file)
 
 	ret = update_time(inode, &now, sync_it);
 	__mnt_drop_write_file(file);
-
-	update_ovl_d_inode_times(file->f_path.dentry, false);
 
 	return ret;
 }

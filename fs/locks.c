@@ -127,6 +127,7 @@
 #include <linux/pid_namespace.h>
 #include <linux/hashtable.h>
 #include <linux/percpu.h>
+#include "internal.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filelock.h>
@@ -1553,6 +1554,15 @@ out:
 
 EXPORT_SYMBOL(__break_lease);
 
+static struct timespec inode_mtime(struct inode *inode)
+{
+	/* TODO: use another SB_ flag and/or pass dentry to lease_get_mtime() */
+	if (unlikely(inode->i_sb->s_flags & MS_NOREMOTELOCK))
+		update_ovl_inode_times(inode);
+
+	return inode->i_mtime;
+}
+
 /**
  *	lease_get_mtime - get the last modified time of an inode
  *	@inode: the inode
@@ -1581,7 +1591,7 @@ void lease_get_mtime(struct inode *inode, struct timespec *time)
 	if (has_lease)
 		*time = current_time(inode);
 	else
-		*time = inode->i_mtime;
+		*time = inode_mtime(inode);
 }
 
 EXPORT_SYMBOL(lease_get_mtime);
