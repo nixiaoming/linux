@@ -1567,8 +1567,7 @@ EXPORT_SYMBOL(bmap);
 /*
  * Update times in overlayed inode from underlying real inode
  */
-static void update_ovl_inode_times(struct dentry *dentry, struct inode *inode,
-			       bool rcu)
+static void update_ovl_d_inode_times(struct dentry *dentry, bool rcu)
 {
 	struct dentry *upperdentry;
 
@@ -1585,6 +1584,7 @@ static void update_ovl_inode_times(struct dentry *dentry, struct inode *inode,
 	 * stale mtime/ctime.
 	 */
 	if (upperdentry) {
+		struct inode *inode = d_inode(dentry);
 		struct inode *realinode = d_inode(upperdentry);
 
 		if ((!timespec_equal(&inode->i_mtime, &realinode->i_mtime) ||
@@ -1607,7 +1607,8 @@ static int relatime_need_update(const struct path *path, struct inode *inode,
 	if (!(path->mnt->mnt_flags & MNT_RELATIME))
 		return 1;
 
-	update_ovl_inode_times(path->dentry, inode, rcu);
+	update_ovl_d_inode_times(path->dentry, rcu);
+
 	/*
 	 * Is mtime younger than atime? If yes, update atime:
 	 */
@@ -1875,6 +1876,8 @@ int file_update_time(struct file *file)
 
 	ret = update_time(inode, &now, sync_it);
 	__mnt_drop_write_file(file);
+
+	update_ovl_d_inode_times(file->f_path.dentry, false);
 
 	return ret;
 }
