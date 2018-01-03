@@ -734,6 +734,19 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 			}
 		}
 
+		/*
+		 * When "verify" feature is enabled, do not merge with a lower
+		 * dir that does not match a stored origin xattr.
+		 */
+		if (upperdentry && !ctr && ovl_verify(dentry->d_sb)) {
+			err = ovl_verify_origin(upperdentry, this, false,
+						false);
+			if (err) {
+				dput(this);
+				break;
+			}
+		}
+
 		stack[ctr].dentry = this;
 		stack[ctr].layer = lower.layer;
 		ctr++;
