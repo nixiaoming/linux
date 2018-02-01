@@ -220,6 +220,8 @@ static void ovl_destroy_inode(struct inode *inode)
 	kfree(oi->redirect);
 	ovl_dir_cache_free(inode);
 	mutex_destroy(&oi->lock);
+	if (ovl_test_flag(OVL_I_PRIVATE_FH, inode))
+		kfree(inode->i_private);
 
 	call_rcu(&inode->i_rcu, ovl_i_callback);
 }

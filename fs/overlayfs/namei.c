@@ -393,7 +393,7 @@ static int ovl_verify_fh(struct dentry *dentry, const char *name,
 	if (IS_ERR(ofh))
 		return PTR_ERR(ofh);
 
-	if (fh->len != ofh->len || memcmp(fh, ofh, fh->len))
+	if (!ovl_fs_equal(fh, ofh))
 		err = -ESTALE;
 
 	kfree(ofh);

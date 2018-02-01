@@ -35,6 +35,8 @@ enum ovl_inode_flag {
 	/* Non-merge dir that may contain whiteout entries */
 	OVL_WHITEOUTS,
 	OVL_INDEX,
+	/* inode->i_priavte is a file handle copy */
+	OVL_I_PRIVATE_FH,
 };
 
 enum ovl_entry_flag {
@@ -82,6 +84,12 @@ struct ovl_fh {
 	uuid_t uuid;	/* uuid of filesystem */
 	u8 fid[0];	/* file identifier */
 } __packed;
+
+static inline bool ovl_fs_equal(const struct ovl_fh *fh1,
+				const struct ovl_fh *fh2)
+{
+	return fh1->len == fh2->len && !memcmp(fh1, fh2, fh1->len);
+}
 
 static inline int ovl_do_rmdir(struct inode *dir, struct dentry *dentry)
 {
@@ -326,6 +334,7 @@ int ovl_update_time(struct inode *inode, struct timespec *ts, int flags);
 bool ovl_is_private_xattr(const char *name);
 
 struct inode *ovl_new_inode(struct super_block *sb, umode_t mode, dev_t rdev);
+struct inode *ovl_lookup_inode_fh(struct super_block *sb, struct ovl_fh *fh);
 struct inode *ovl_lookup_inode(struct super_block *sb, struct dentry *real,
 			       bool is_upper);
 struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,

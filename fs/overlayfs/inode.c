@@ -651,12 +651,65 @@ static bool ovl_verify_inode(struct inode *inode, struct dentry *lowerdentry,
 	return true;
 }
 
+/*
+ * Overlay inodes are hashed by lower file handle for NFS export, so decode can
+ * lookup inode cache before doing index lookup and decoding real file handles.
+ * For pure upper or non-indexed upper or without NFS export, we hash by real
+ * inode pointer as before NFS export. i_private holds a copy of lower file
+ * handle or the real inode pointer respectively.
+ */
+static int ovl_inode_test_fh(struct inode *inode, void *data)
+{
+	return ovl_test_flag(OVL_I_PRIVATE_FH, inode) &&
+	       ovl_fs_equal(inode->i_private, data);
+}
+
+/* Compute hash from real fs uuid and real fs file handle */
+static unsigned long ovl_fh_hash(struct ovl_fh *fh)
+{
+	/*
+	 * Mixing the uuid with the real file handle is needed for an
+	 * overlay configuration of many lower layers on different fs.
+	 * Other ovl_fh header values are not likely to add random bits.
+	 */
+	return full_name_long_hash(NULL, (const char *)&fh->uuid,
+				   fh->len - offsetof(struct ovl_fh, uuid));
+}
+
+static struct ovl_fh *ovl_real_fh_hash(struct dentry *real, bool is_upper,
+				       unsigned long *pkey)
+{
+	struct ovl_fh *fh = ovl_encode_real_fh(real, is_upper);
+
+	if (!IS_ERR(fh))
+		*pkey = ovl_fh_hash(fh);
+
+	return fh;
+}
+
+/* Lookup overlay inode by real inode file handle */
+struct inode *ovl_lookup_inode_fh(struct super_block *sb, struct ovl_fh *fh)
+{
+	return ilookup5(sb, ovl_fh_hash(fh), ovl_inode_test_fh, fh);
+}
+
+/* Lookup overlay inode by real upper inode or by lower inode file handle */
 struct inode *ovl_lookup_inode(struct super_block *sb, struct dentry *real,
 			       bool is_upper)
 {
 	struct inode *inode, *key = d_inode(real);
+	struct ovl_fh *fh;
 
-	inode = ilookup5(sb, (unsigned long) key, ovl_inode_test, key);
+	if (is_upper) {
+		inode = ilookup5(sb, (unsigned long) key, ovl_inode_test, key);
+	} else {
+		fh = ovl_encode_real_fh(real, false);
+		if (IS_ERR(fh))
+			return ERR_CAST(fh);
+
+		inode = ovl_lookup_inode_fh(sb, fh);
+		kfree(fh);
+	}
 	if (!inode)
 		return NULL;
 
@@ -709,10 +762,23 @@ struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
 	struct inode *realinode = upperdentry ? d_inode(upperdentry) : NULL;
 	struct inode *inode;
 	bool bylower = ovl_hash_bylower(sb, upperdentry, lowerdentry, index);
+	struct ovl_fh *fh = NULL;
+	unsigned long key;
 	bool is_dir;
 
 	if (!realinode)
 		realinode = d_inode(lowerdentry);
+
+	/* Hash non-upper and indexed by origin fh for NFS export */
+	if (sb->s_export_op && bylower) {
+		fh = ovl_real_fh_hash(lowerdentry, false, &key);
+		if (IS_ERR(fh))
+			return ERR_CAST(fh);
+	} else if (bylower) {
+		key = (unsigned long) d_inode(lowerdentry);
+	} else if (upperdentry) {
+		key = (unsigned long) d_inode(upperdentry);
+	}
 
 	/*
 	 * Copy up origin (lower) may exist for non-indexed upper, but we must
@@ -720,12 +786,11 @@ struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
 	 */
 	is_dir = S_ISDIR(realinode->i_mode);
 	if (upperdentry || bylower) {
-		struct inode *key = d_inode(bylower ? lowerdentry :
-						      upperdentry);
 		unsigned int nlink = is_dir ? 1 : realinode->i_nlink;
 
-		inode = iget5_locked(sb, (unsigned long) key,
-				     ovl_inode_test, ovl_inode_set, key);
+		inode = iget5_locked(sb, key, fh ? ovl_inode_test_fh :
+						   ovl_inode_test,
+				     ovl_inode_set, fh ?: (void *)key);
 		if (!inode)
 			goto out_nomem;
 		if (!(inode->i_state & I_NEW)) {
@@ -742,6 +807,10 @@ struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
 
 			dput(upperdentry);
 			goto out;
+		} else if (fh) {
+			/* i_private keeps the reference to fh */
+			ovl_set_flag(OVL_I_PRIVATE_FH, inode);
+			fh = NULL;
 		}
 
 		/* Recalculate nlink for non-dir due to indexing */
@@ -771,6 +840,7 @@ struct inode *ovl_get_inode(struct super_block *sb, struct dentry *upperdentry,
 	if (inode->i_state & I_NEW)
 		unlock_new_inode(inode);
 out:
+	kfree(fh);
 	return inode;
 
 out_nomem:
