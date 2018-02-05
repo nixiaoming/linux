@@ -63,7 +63,11 @@ static inline unsigned long end_name_hash(unsigned long hash)
  *
  * If not set, this falls back to a wrapper around the preceding.
  */
-extern unsigned int __pure full_name_hash(const void *salt, const char *, unsigned int);
+extern unsigned int __pure full_name_hash(const void *salt, const char *name,
+					  unsigned int len);
+extern unsigned long __pure full_name_long_hash(const void *salt,
+						const char *name,
+						unsigned int len);
 
 /*
  * A hash_len is a u64 with the hash of a string in the low

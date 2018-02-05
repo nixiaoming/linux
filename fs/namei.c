@@ -1804,7 +1804,7 @@ static int walk_component(struct nameidata *nd, int flags)
 
 #ifdef HASH_MIX
 
-/* Architecture provides HASH_MIX and fold_hash() in <asm/hash.h> */
+/* Architecture provides HASH_MIX and fold_long_hash() in <asm/hash.h> */
 
 #elif defined(CONFIG_64BIT)
 /*
@@ -1843,15 +1843,13 @@ static int walk_component(struct nameidata *nd, int flags)
 	y *= 9			)
 
 /*
- * Fold two longs into one 32-bit hash value.  This must be fast, but
+ * Fold two longs into one long hash value.  This must be fast, but
  * latency isn't quite as critical, as there is a fair bit of additional
  * work done before the hash value is used.
  */
-static inline unsigned int fold_hash(unsigned long x, unsigned long y)
+static inline unsigned long fold_long_hash(unsigned long x, unsigned long y)
 {
-	y ^= x * GOLDEN_RATIO_64;
-	y *= GOLDEN_RATIO_64;
-	return y >> 32;
+	return __hash_64(y ^ __hash_64(x));
 }
 
 #else	/* 32-bit case */
@@ -1872,13 +1870,18 @@ static inline unsigned int fold_hash(unsigned long x, unsigned long y)
 	x += y,	y = rol32(y,20),\
 	y *= 9			)
 
-static inline unsigned int fold_hash(unsigned long x, unsigned long y)
+static inline unsigned long fold_long_hash(unsigned long x, unsigned long y)
 {
 	/* Use arch-optimized multiply if one exists */
 	return __hash_32(y ^ __hash_32(x));
 }
 
 #endif
+
+static inline unsigned int fold_hash(unsigned long x, unsigned long y)
+{
+	return fold_long_hash(x, y) >> (BITS_PER_LONG - 32);
+}
 
 /*
  * Return the hash of a string of known length.  This is carfully
@@ -1887,7 +1890,8 @@ static inline unsigned int fold_hash(unsigned long x, unsigned long y)
  * payload bytes, to match the way that hash_name() iterates until it
  * finds the delimiter after the name.
  */
-unsigned int full_name_hash(const void *salt, const char *name, unsigned int len)
+unsigned long full_name_long_hash(const void *salt, const char *name,
+				  unsigned int len)
 {
 	unsigned long a, x = 0, y = (unsigned long)salt;
 
@@ -1903,7 +1907,14 @@ unsigned int full_name_hash(const void *salt, const char *name, unsigned int len
 	}
 	x ^= a & bytemask_from_count(len);
 done:
-	return fold_hash(x, y);
+	return fold_long_hash(x, y);
+}
+EXPORT_SYMBOL(full_name_long_hash);
+
+unsigned int full_name_hash(const void *salt, const char *name,
+			    unsigned int len)
+{
+	return full_name_long_hash(salt, name, len) >> (BITS_PER_LONG - 32);
 }
 EXPORT_SYMBOL(full_name_hash);
 
@@ -1964,12 +1975,20 @@ inside:
 #else	/* !CONFIG_DCACHE_WORD_ACCESS: Slow, byte-at-a-time version */
 
 /* Return the hash of a string of known length */
-unsigned int full_name_hash(const void *salt, const char *name, unsigned int len)
+unsigned long full_name_long_hash(const void *salt, const char *name,
+				  unsigned int len)
 {
 	unsigned long hash = init_name_hash(salt);
 	while (len--)
 		hash = partial_name_hash((unsigned char)*name++, hash);
-	return end_name_hash(hash);
+	return hash;
+}
+EXPORT_SYMBOL(full_name_long_hash);
+
+unsigned int full_name_hash(const void *salt, const char *name,
+			    unsigned int len)
+{
+	return end_name_hash(full_name_long_hash(salt, name, len));
 }
 EXPORT_SYMBOL(full_name_hash);
 
