@@ -329,6 +329,9 @@ check_directory_table:
 		goto failed_mount;
 	}
 
+	/* Use a constant UUID instead of null UUID for overlayfs */
+	memcpy((char *)&sb->s_uuid, (char *)&sb->s_magic, sizeof(sb->s_magic));
+
 	TRACE("Leaving squashfs_fill_super\n");
 	kfree(sblk);
 	return 0;
