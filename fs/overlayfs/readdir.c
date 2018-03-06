@@ -384,6 +384,18 @@ static int ovl_dir_read_merged(struct dentry *dentry, struct list_head *list,
 			list_del(&rdd.middle);
 		}
 	}
+
+	/*
+	 * When "migrate" feature is enabled, ignore error when reading from
+	 * lower dir in the following cases:
+	 * - Lower directory has been removed locally (ENOENT)
+	 * - Lower directory has been removed remotely (ESTALE)
+	 * - Lower filesystem has been shutdown (EIO)
+	 */
+	if (err && !rdd.is_upper && ovl_migrate(dentry->d_sb) &&
+	    (err == -ENOENT || err == -ESTALE || err == -EIO))
+		return 0;
+
 	return err;
 }
 

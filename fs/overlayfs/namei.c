@@ -24,6 +24,7 @@ struct ovl_lookup_data {
 	bool stop;
 	bool last;
 	char *redirect;
+	int idx;
 };
 
 static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
@@ -227,6 +228,16 @@ static int ovl_lookup_single(struct dentry *base, struct ovl_lookup_data *d,
 		this = NULL;
 		if (err == -ENOENT || err == -ENAMETOOLONG)
 			goto out;
+
+		/*
+		 * When "migrate" feature is enabled, ignore errors from lower
+		 * dir lookup in the following cases:
+		 * - Remote directory has been removed (ESTALE)
+		 * - Lower filesystem has been shutdown (EIO)
+		 */
+		if (d->idx && (err == -ESTALE || err == -EIO))
+			goto out;
+
 		goto out_err;
 	}
 	if (!this->d_inode)
@@ -874,6 +885,8 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		struct ovl_path lower = poe->lowerstack[i];
 
 		d.last = i == poe->numlower - 1;
+		if (ovl_migrate(dentry->d_sb))
+			d.idx = lower.layer->idx;
 		err = ovl_lookup_layer(lower.dentry, &d, &this);
 		if (err)
 			goto out_put;
@@ -1046,6 +1059,18 @@ bool ovl_lower_positive(struct dentry *dentry)
 			case -ENAMETOOLONG:
 				break;
 
+			/*
+			 * When "migrate" feature is enabled, ignore errors from
+			 * lower dir lookup in the following cases:
+			 * - Remote directory has been removed (ESTALE)
+			 * - Lower filesystem has been shutdown (EIO)
+			 */
+			case -ESTALE:
+			case -EIO:
+				if (ovl_migrate(dentry->d_sb))
+					break;
+
+				/* Fall through */
 			default:
 				/*
 				 * Assume something is there, we just couldn't
