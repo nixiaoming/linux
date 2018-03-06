@@ -493,6 +493,10 @@ bool ovl_need_index(struct dentry *dentry)
 	if (ovl_index_all(dentry->d_sb))
 		return true;
 
+	/* Index all regular files to keep track of migration progress */
+	if (ovl_migrate(dentry->d_sb) && d_is_reg(lower))
+		return true;
+
 	/* Index only lower hardlinks on copy up */
 	if (!d_is_dir(lower) && d_inode(lower)->i_nlink > 1)
 		return true;
