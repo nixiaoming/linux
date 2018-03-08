@@ -256,7 +256,9 @@ static int ovl_lookup_single(struct dentry *base, struct ovl_lookup_data *d,
 		goto out;
 	}
 	d->is_dir = true;
-	if (!d->last && ovl_is_opaquedir(this)) {
+	if (d->last)
+		goto out;
+	if (ovl_is_opaquedir(this)) {
 		d->stop = d->opaque = true;
 		goto out;
 	}
@@ -823,7 +825,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		.is_dir = false,
 		.opaque = false,
 		.stop = false,
-		.last = !poe->numlower,
+		.last = false,
 		.redirect = NULL,
 	};
 
@@ -881,7 +883,7 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 	for (i = 0; !d.stop && i < poe->numlower; i++) {
 		struct ovl_path lower = poe->lowerstack[i];
 
-		d.last = i == poe->numlower - 1;
+		d.last = lower.layer->idx == roe->numlower;
 		err = ovl_lookup_layer(lower.dentry, &d, &this);
 		if (err)
 			goto out_put;
