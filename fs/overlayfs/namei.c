@@ -51,6 +51,14 @@ static int ovl_check_redirect(struct dentry *dentry, struct ovl_lookup_data *d,
 	if (res == 0)
 		goto invalid;
 	if (buf[0] == '/') {
+		/*
+		 * One of the ancestor path elements in an absolute path
+		 * lookup in ovl_lookup_layer() could have been opaque, but it
+		 * possible for a decendant path element to reset opaqueness in
+		 * case this path element has an absolute redirect to a lower
+		 * layer.
+		 */
+		d->stop = d->opaque = false;
 		for (s = buf; *s++ == '/'; s = next) {
 			next = strchrnul(s, '/');
 			if (s == next)
