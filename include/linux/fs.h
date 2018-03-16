@@ -1342,6 +1342,7 @@ struct sb_writers {
 struct super_block {
 	struct list_head	s_list;		/* Keep this first */
 	dev_t			s_dev;		/* search index; _not_ kdev_t */
+	unsigned char		s_max_ino_bits; /* Max used inode number bits */
 	unsigned char		s_blocksize_bits;
 	unsigned long		s_blocksize;
 	loff_t			s_maxbytes;	/* Max file size */
