@@ -701,6 +701,7 @@ static int ovl_check_namelen(struct path *path, struct ovl_fs *ofs,
 static int ovl_lower_dir(const char *name, struct path *path,
 			 struct ovl_fs *ofs, int *stack_depth, bool *remote)
 {
+	struct super_block *sb;
 	int fh_type;
 	int err;
 
@@ -721,7 +722,8 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	 * The inodes index feature and NFS export need to encode and decode
 	 * file handles, so they require that all layers support them.
 	 */
-	fh_type = ovl_can_decode_fh(path->dentry->d_sb);
+	sb = path->dentry->d_sb;
+	fh_type = ovl_can_decode_fh(sb);
 	if ((ofs->config.nfs_export ||
 	     (ofs->config.index && ofs->config.upperdir)) && !fh_type) {
 		ofs->config.index = false;
@@ -730,8 +732,10 @@ static int ovl_lower_dir(const char *name, struct path *path,
 			name);
 	}
 
-	/* Check if lower fs has 32bit inode numbers */
-	if (fh_type != FILEID_INO32_GEN)
+	/* Check how many inode number bits are used by lower fs */
+	if (sb->s_max_ino_bits)
+		ofs->xino_bits = min(ofs->xino_bits, 64 - sb->s_max_ino_bits);
+	else if (fh_type != FILEID_INO32_GEN)
 		ofs->xino_bits = 0;
 
 	return 0;
@@ -955,6 +959,7 @@ out:
 
 static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 {
+	struct super_block *sb;
 	struct vfsmount *mnt = ofs->upper_mnt;
 	struct dentry *temp;
 	int fh_type;
@@ -1007,14 +1012,17 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	}
 
 	/* Check if upper/work fs supports file handles */
-	fh_type = ovl_can_decode_fh(ofs->workdir->d_sb);
+	sb = ofs->workdir->d_sb;
+	fh_type = ovl_can_decode_fh(sb);
 	if (ofs->config.index && !fh_type) {
 		ofs->config.index = false;
 		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
 	}
 
-	/* Check if upper fs has 32bit inode numbers */
-	if (fh_type != FILEID_INO32_GEN)
+	/* Check how many inode number bits are used by upper fs */
+	if (sb->s_max_ino_bits)
+		ofs->xino_bits = min(ofs->xino_bits, 64 - sb->s_max_ino_bits);
+	else if (fh_type != FILEID_INO32_GEN)
 		ofs->xino_bits = 0;
 
 	/* NFS export of r/w mount depends on index */
