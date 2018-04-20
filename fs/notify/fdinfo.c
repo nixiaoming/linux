@@ -127,7 +127,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		seq_putc(m, '\n');
 		iput(inode);
 	} else if (mark->connector->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
-		struct mount *mnt = real_mount(mark->connector->mnt);
+		struct mount *mnt = fsnotify_obj_mount(mark->connector->obj);
 
 		seq_printf(m, "fanotify mnt_id:%x mflags:%x mask:%x ignored_mask:%x\n",
 			   mnt->mnt_id, mflags, mark->mask, mark->ignored_mask);
