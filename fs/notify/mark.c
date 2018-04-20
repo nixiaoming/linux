@@ -140,7 +140,8 @@ void fsnotify_recalc_mask(struct fsnotify_mark_connector *conn)
 	__fsnotify_recalc_mask(conn);
 	spin_unlock(&conn->lock);
 	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
-		__fsnotify_update_child_dentry_flags(conn->inode);
+		__fsnotify_update_child_dentry_flags(
+				fsnotify_connector_inode(conn));
 }
 
 /* Free all connectors queued for freeing once SRCU period ends */

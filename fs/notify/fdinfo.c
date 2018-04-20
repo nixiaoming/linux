@@ -81,7 +81,7 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		return;
 
 	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
-	inode = igrab(mark->connector->inode);
+	inode = igrab(fsnotify_connector_inode(mark->connector));
 	if (inode) {
 		/*
 		 * IN_ALL_EVENTS represents all of the mask bits
@@ -117,7 +117,7 @@ static void fanotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 		mflags |= FAN_MARK_IGNORED_SURV_MODIFY;
 
 	if (mark->connector->type == FSNOTIFY_OBJ_TYPE_INODE) {
-		inode = igrab(mark->connector->inode);
+		inode = igrab(fsnotify_connector_inode(mark->connector));
 		if (!inode)
 			return;
 		seq_printf(m, "fanotify ino:%lx sdev:%x mflags:%x mask:%x ignored_mask:%x ",

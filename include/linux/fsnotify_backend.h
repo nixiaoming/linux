@@ -279,6 +279,12 @@ static inline struct inode *fsnotify_obj_inode(struct fsnotify_obj *obj)
 	return container_of(obj, struct inode, i_fsnotify);
 }
 
+static inline struct inode *fsnotify_connector_inode(
+		struct fsnotify_mark_connector *conn)
+{
+	return conn->inode;
+}
+
 /*
  * A mark is simply an object attached to an in core inode which allows an
  * fsnotify listener to indicate they are either no longer interested in events
