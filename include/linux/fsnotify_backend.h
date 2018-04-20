@@ -269,6 +269,13 @@ struct fsnotify_mark_connector {
 };
 
 /*
+ * fsnotify_obj_t is what we embed in objects which marks can be attached to.
+ * This allows us to write nice looking generic code referring to the watched
+ * object without having to open code struct fsnotify_mark_connector __rcu **.
+ */
+typedef struct fsnotify_mark_connector __rcu *fsnotify_obj_t;
+
+/*
  * A mark is simply an object attached to an in core inode which allows an
  * fsnotify listener to indicate they are either no longer interested in events
  * of a type matching mask or only interested in those events.
@@ -393,10 +400,9 @@ extern struct fsnotify_event *fsnotify_remove_first_event(struct fsnotify_group 
 extern void fsnotify_recalc_mask(struct fsnotify_mark_connector *conn);
 extern void fsnotify_init_mark(struct fsnotify_mark *mark,
 			       struct fsnotify_group *group);
-/* Find mark belonging to given group in the list of marks */
-extern struct fsnotify_mark *fsnotify_find_mark(
-				struct fsnotify_mark_connector __rcu **connp,
-				struct fsnotify_group *group);
+/* Find mark belonging to given group in the list of object marks */
+extern struct fsnotify_mark *fsnotify_find_mark(fsnotify_obj_t *obj,
+						struct fsnotify_group *group);
 /* attach the mark to the inode or vfsmount */
 extern int fsnotify_add_mark(struct fsnotify_mark *mark, struct inode *inode,
 			     struct vfsmount *mnt, int allow_dups);
