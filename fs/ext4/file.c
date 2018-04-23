@@ -392,7 +392,7 @@ static int ext4_sample_last_mounted(struct super_block *sb,
 	if (likely(sbi->s_mount_flags & EXT4_MF_MNTDIR_SAMPLED))
 		return 0;
 
-	if (sb_rdonly(sb))
+	if (sb_rdonly(sb) || !sb_start_intwrite_trylock(sb))
 		return 0;
 
 	sbi->s_mount_flags |= EXT4_MF_MNTDIR_SAMPLED;
@@ -406,12 +406,14 @@ static int ext4_sample_last_mounted(struct super_block *sb,
 	path.mnt = mnt;
 	path.dentry = mnt->mnt_root;
 	cp = d_path(&path, buf, sizeof(buf));
+	err = 0;
 	if (IS_ERR(cp))
-		return 0;
+		goto out_intwrite;
 
 	handle = ext4_journal_start_sb(sb, EXT4_HT_MISC, 1);
+	err = PTR_ERR(handle);
 	if (IS_ERR(handle))
-		return PTR_ERR(handle);
+		goto out_intwrite;
 	BUFFER_TRACE(sbi->s_sbh, "get_write_access");
 	err = ext4_journal_get_write_access(handle, sbi->s_sbh);
 	if (err)
@@ -421,6 +423,8 @@ static int ext4_sample_last_mounted(struct super_block *sb,
 	ext4_handle_dirty_super(handle, sb);
 out:
 	ext4_journal_stop(handle);
+out_intwrite:
+	sb_end_intwrite(sb);
 	return err;
 }
 
