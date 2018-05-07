@@ -216,6 +216,7 @@ static int ovl_check_encode_origin(struct dentry *dentry)
 
 static int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
+	struct dentry *real = NULL;
 	struct ovl_fh *fh = NULL;
 	int err, enc_lower;
 
@@ -228,11 +229,18 @@ static int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 		goto fail;
 
 	/* Encode an upper or lower file handle */
-	fh = ovl_encode_real_fh(enc_lower ? ovl_dentry_lower(dentry) :
-				ovl_dentry_upper(dentry), !enc_lower);
+	real = enc_lower ? ovl_dentry_lower(dentry) : ovl_dentry_upper(dentry);
+	fh = ovl_encode_real_fh(real, !enc_lower);
 	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
 		goto fail;
+
+	/*
+	 * Set the nested flag if encoding file handle from nested lower
+	 * overlay. Nesting depth cannot be larger than 1, so one bit is enough.
+	 */
+	if (enc_lower && ovl_is_overlay_fs(real->d_sb))
+		fh->flags |= OVL_FH_FLAG_PATH_NESTED;
 
 	err = -EOVERFLOW;
 	if (fh->len > buflen)
@@ -788,6 +796,7 @@ static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 	struct ovl_fh *fh = (struct ovl_fh *) fid;
 	int len = fh_len << 2;
 	unsigned int flags = 0;
+	bool nested;
 	int err;
 
 	err = -EINVAL;
@@ -798,8 +807,20 @@ static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 	if (err)
 		goto out_err;
 
+	/*
+	 * Do not try to decode nested upper from upper_mnt. Decode nested file
+	 * handle only from nested lower overlayfs and clear the 'nested' flag
+	 * before decoding from lower overlayfs.
+	 */
 	flags = fh->flags;
-	dentry = (flags & OVL_FH_FLAG_PATH_UPPER) ?
+	nested = (fh->flags & OVL_FH_FLAG_PATH_NESTED);
+	fh->flags &= ~OVL_FH_FLAG_PATH_NESTED;
+
+	err = -ESTALE;
+	if (nested && !ovl_is_overlay_fs(ovl_dentry_lower(sb->s_root)->d_sb))
+		goto out_err;
+
+	dentry = ((flags & OVL_FH_FLAG_PATH_UPPER) && !nested) ?
 		 ovl_upper_fh_to_d(sb, fh) :
 		 ovl_lower_fh_to_d(sb, fh);
 	err = PTR_ERR(dentry);

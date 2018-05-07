@@ -783,12 +783,7 @@ static int ovl_lower_dir(const char *name, struct path *path,
 		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off.\n",
 			name);
 	}
-	/*
-	 * We do not support nested overlay NFS export even if lower overlay
-	 * does support NFS export.
-	 */
-	if (ofs->config.nfs_export &&
-	    (!fh_type || ovl_is_overlay_fs(real_sb))) {
+	if (ofs->config.nfs_export && !fh_type) {
 		ofs->config.nfs_export = false;
 		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to nfs_export=off.\n",
 			name);
