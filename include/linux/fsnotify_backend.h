@@ -263,6 +263,10 @@ FSNOTIFY_ITER_FUNCS(vfsmount, VFSMOUNT)
 struct fsnotify_mark_connector;
 typedef struct fsnotify_mark_connector __rcu *fsnotify_obj_t;
 
+/* Bits to set on connector pointer instead of 32bit mask in struct inode */
+#define FSNOTIFY_MARKS_ON_CHILD	1UL
+#define FSNOTIFY_MARKS_MASK	(FSNOTIFY_MARKS_ON_CHILD)
+
 /*
  * Inode / vfsmount point to this structure which tracks all marks attached to
  * the inode / vfsmount. The reference to inode / vfsmount is held by this
@@ -334,14 +338,19 @@ extern void __fsnotify_inode_delete(struct inode *inode);
 extern void __fsnotify_vfsmount_delete(struct vfsmount *mnt);
 extern u32 fsnotify_get_cookie(void);
 
-static inline int fsnotify_inode_watches_children(struct inode *inode)
+static inline int __fsnotify_inode_watches_children(__u32 mask)
 {
 	/* FS_EVENT_ON_CHILD is set if the inode may care */
-	if (!(inode->i_fsnotify_mask & FS_EVENT_ON_CHILD))
+	if (!(mask & FS_EVENT_ON_CHILD))
 		return 0;
 	/* this inode might care about child events, does it care about the
 	 * specific set of events that can happen on a child? */
-	return inode->i_fsnotify_mask & FS_EVENTS_POSS_ON_CHILD;
+	return mask & FS_EVENTS_POSS_ON_CHILD;
+}
+
+static inline int fsnotify_inode_watches_children(struct inode *inode)
+{
+	return (unsigned long)inode->i_fsnotify_marks & FSNOTIFY_MARKS_ON_CHILD;
 }
 
 /*

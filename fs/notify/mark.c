@@ -126,6 +126,29 @@ __u32 fsnotify_connector_mask(struct fsnotify_mark_connector *conn)
 	return *fsnotify_connector_mask_p(conn);
 }
 
+static void fsnotify_set_connector_mask(struct fsnotify_mark_connector *conn,
+					__u32 mask)
+{
+	if (mask && conn->type == FSNOTIFY_OBJ_TYPE_INODE) {
+		unsigned long marks_mask;
+		/*
+		 * to save space in struct inode, store important bits
+		 * of mask in the connector pointer.
+		 */
+		marks_mask = (unsigned long)*(conn->obj) & ~FSNOTIFY_MARKS_MASK;
+		if (__fsnotify_inode_watches_children(mask))
+			marks_mask |= FSNOTIFY_MARKS_ON_CHILD;
+
+		if ((unsigned long)*(conn->obj) != marks_mask)
+			rcu_assign_pointer(*(conn->obj), marks_mask);
+	}
+
+	if (WARN_ON(!fsnotify_valid_obj_type(conn->type)))
+		return;
+
+	*fsnotify_connector_mask_p(conn) = mask;
+}
+
 static void __fsnotify_recalc_mask(struct fsnotify_mark_connector *conn)
 {
 	u32 new_mask = 0;
@@ -136,10 +159,7 @@ static void __fsnotify_recalc_mask(struct fsnotify_mark_connector *conn)
 		if (mark->flags & FSNOTIFY_MARK_FLAG_ATTACHED)
 			new_mask |= mark->mask;
 	}
-	if (WARN_ON(!fsnotify_valid_obj_type(conn->type)))
-		return;
-
-	*fsnotify_connector_mask_p(conn) = new_mask;
+	fsnotify_set_connector_mask(conn, new_mask);
 }
 
 /*
@@ -496,7 +516,9 @@ static struct fsnotify_mark_connector *fsnotify_grab_connector(
 	int idx;
 
 	idx = srcu_read_lock(&fsnotify_mark_srcu);
-	conn = srcu_dereference(*obj, &fsnotify_mark_srcu);
+	conn = (struct fsnotify_mark_connector *)
+	       ((unsigned long)srcu_dereference(*obj, &fsnotify_mark_srcu) &
+	        ~FSNOTIFY_MARKS_MASK);
 	if (!conn)
 		goto out;
 	spin_lock(&conn->lock);
