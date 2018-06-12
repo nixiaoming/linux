@@ -276,6 +276,10 @@ typedef struct fsnotify_mark_connector __rcu *fsnotify_obj_t;
 struct fsnotify_mark_connector {
 	spinlock_t lock;
 	unsigned int type;	/* Type of object [lock] */
+#ifndef CONFIG_FSNOTIFY_INODE_MASK
+	/* Store mask in connector to save space in struct inode */
+	__u32 mask;	/* All events this object cares about [lock] */
+#endif
 	union {
 		/* Object pointer [lock] */
 		fsnotify_obj_t *obj;

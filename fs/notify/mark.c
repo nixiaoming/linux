@@ -111,19 +111,25 @@ void fsnotify_get_mark(struct fsnotify_mark *mark)
 
 static __u32 *fsnotify_connector_mask_p(struct fsnotify_mark_connector *conn)
 {
+#ifdef CONFIG_FSNOTIFY_INODE_MASK
 	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
 		return &fsnotify_obj_inode(conn->obj)->i_fsnotify_mask;
-	else if (conn->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT)
+#endif
+	if (conn->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT)
 		return &fsnotify_obj_mount(conn->obj)->mnt_fsnotify_mask;
 	return NULL;
 }
 
 __u32 fsnotify_connector_mask(struct fsnotify_mark_connector *conn)
 {
+#ifndef CONFIG_FSNOTIFY_INODE_MASK
+	return conn->mask;
+#else
 	if (WARN_ON(!fsnotify_valid_obj_type(conn->type)))
 		return 0;
 
 	return *fsnotify_connector_mask_p(conn);
+#endif
 }
 
 static void fsnotify_set_connector_mask(struct fsnotify_mark_connector *conn,
@@ -142,6 +148,12 @@ static void fsnotify_set_connector_mask(struct fsnotify_mark_connector *conn,
 		if ((unsigned long)*(conn->obj) != marks_mask)
 			rcu_assign_pointer(*(conn->obj), marks_mask);
 	}
+
+#ifndef CONFIG_FSNOTIFY_INODE_MASK
+	conn->mask = mask;
+	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
+		return;
+#endif
 
 	if (WARN_ON(!fsnotify_valid_obj_type(conn->type)))
 		return;
@@ -207,13 +219,10 @@ static struct inode *fsnotify_detach_connector_from_object(
 	if (conn->type == FSNOTIFY_OBJ_TYPE_DETACHED)
 		return NULL;
 
-	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE) {
+	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
 		inode = fsnotify_obj_inode(conn->obj);
-		inode->i_fsnotify_mask = 0;
-	} else if (conn->type == FSNOTIFY_OBJ_TYPE_VFSMOUNT) {
-		fsnotify_obj_mount(conn->obj)->mnt_fsnotify_mask = 0;
-	}
 
+	fsnotify_set_connector_mask(conn, 0);
 	rcu_assign_pointer(*(conn->obj), NULL);
 	conn->obj = NULL;
 	conn->type = FSNOTIFY_OBJ_TYPE_DETACHED;
@@ -487,6 +496,7 @@ static int fsnotify_attach_connector_to_object(fsnotify_obj_t *obj,
 	INIT_HLIST_HEAD(&conn->list);
 	conn->type = type;
 	conn->obj = obj;
+	fsnotify_set_connector_mask(conn, 0);
 	if (conn->type == FSNOTIFY_OBJ_TYPE_INODE)
 		inode = igrab(fsnotify_obj_inode(obj));
 	/*

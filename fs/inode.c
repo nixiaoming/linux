@@ -189,7 +189,7 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_acl = inode->i_default_acl = ACL_NOT_CACHED;
 #endif
 
-#ifdef CONFIG_FSNOTIFY
+#ifdef CONFIG_FSNOTIFY_INODE_MASK
 	inode->i_fsnotify_mask = 0;
 #endif
 	inode->i_flctx = NULL;

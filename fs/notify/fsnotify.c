@@ -142,6 +142,29 @@ void __fsnotify_update_child_dentry_flags(struct inode *inode)
 	spin_unlock(&inode->i_lock);
 }
 
+/* First test before srcu_read_lock() */
+static bool fsnotify_test_inode_mask(struct inode *inode, __u32 mask)
+{
+#ifdef CONFIG_FSNOTIFY_INODE_MASK
+	return (inode->i_fsnotify_mask & mask);
+#else
+	return true;
+#endif
+}
+
+/* Second test after srcu_read_lock() */
+static bool fsnotify_test_connector_mask(struct inode *inode, __u32 mask)
+{
+#ifdef CONFIG_FSNOTIFY_INODE_MASK
+	return (inode->i_fsnotify_mask & mask);
+#else
+	struct fsnotify_mark_connector *conn;
+
+	conn = srcu_dereference(inode->i_fsnotify_marks, &fsnotify_mark_srcu);
+	return conn && (mask & conn->mask);
+#endif
+}
+
 /* Notify this dentry's parent about a child's events. */
 int __fsnotify_parent(const struct path *path, struct dentry *dentry, __u32 mask)
 {
@@ -160,7 +183,7 @@ int __fsnotify_parent(const struct path *path, struct dentry *dentry, __u32 mask
 
 	if (unlikely(!fsnotify_inode_watches_children(p_inode)))
 		__fsnotify_update_child_dentry_flags(p_inode);
-	else if (p_inode->i_fsnotify_mask & mask) {
+	else if (fsnotify_test_inode_mask(p_inode, mask)) {
 		struct name_snapshot name;
 
 		/* we are notifying a parent so come up with the new mask which
@@ -345,17 +368,11 @@ int fsnotify(struct inode *to_tell, __u32 mask, const void *data, int data_is,
 	 * this type of event.
 	 */
 	if (!(mask & FS_MODIFY) &&
-	    !(test_mask & to_tell->i_fsnotify_mask) &&
+	    !fsnotify_test_inode_mask(to_tell, test_mask) &&
 	    !(mnt && test_mask & mnt->mnt_fsnotify_mask))
 		return 0;
 
 	iter_info.srcu_idx = srcu_read_lock(&fsnotify_mark_srcu);
-
-	if ((mask & FS_MODIFY) ||
-	    (test_mask & to_tell->i_fsnotify_mask)) {
-		iter_info.marks[FSNOTIFY_OBJ_TYPE_INODE] =
-			fsnotify_first_mark(&to_tell->i_fsnotify_marks);
-	}
 
 	if (mnt && ((mask & FS_MODIFY) ||
 		    (test_mask & mnt->mnt_fsnotify_mask))) {
@@ -363,6 +380,10 @@ int fsnotify(struct inode *to_tell, __u32 mask, const void *data, int data_is,
 			fsnotify_first_mark(&to_tell->i_fsnotify_marks);
 		iter_info.marks[FSNOTIFY_OBJ_TYPE_VFSMOUNT] =
 			fsnotify_first_mark(&mnt->mnt_fsnotify_marks);
+	} else if ((mask & FS_MODIFY) ||
+		    fsnotify_test_connector_mask(to_tell, test_mask)) {
+		iter_info.marks[FSNOTIFY_OBJ_TYPE_INODE] =
+			fsnotify_first_mark(&to_tell->i_fsnotify_marks);
 	}
 
 	/*

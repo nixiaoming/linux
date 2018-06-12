@@ -662,7 +662,9 @@ struct inode {
 	__u32			i_generation;
 
 #ifdef CONFIG_FSNOTIFY
+#ifdef CONFIG_FSNOTIFY_INODE_MASK
 	__u32			i_fsnotify_mask; /* all events this inode cares about */
+#endif
 	struct fsnotify_mark_connector __rcu	*i_fsnotify_marks;
 #endif
 
