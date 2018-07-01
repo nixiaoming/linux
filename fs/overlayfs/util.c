@@ -63,9 +63,18 @@ struct super_block *ovl_same_sb(struct super_block *sb)
  * Return 1 (FILEID_INO32_GEN) if fs uses the default 32bit inode encoding.
  * Return -1 if fs uses a non default encoding with unknown inode size.
  */
-int ovl_can_decode_fh(struct super_block *sb)
+int ovl_can_decode_real_fh(struct super_block *sb)
 {
 	if (!sb->s_export_op || !sb->s_export_op->fh_to_dentry)
+		return 0;
+
+	/*
+	 * In case FILESYSTEM_MAX_STACK_DEPTH ever grows, we only support
+	 * one level of nesting in ovl_fh. This test should be optimized out
+	 * at build time.
+	 */
+	if (FILESYSTEM_MAX_STACK_DEPTH > 2 &&
+	    ovl_is_overlay_fs(sb) && sb->s_stack_depth > 1)
 		return 0;
 
 	return sb->s_export_op->encode_fh ? -1 : FILEID_INO32_GEN;
