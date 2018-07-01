@@ -154,18 +154,28 @@ struct dentry *ovl_decode_real_fh(struct ovl_fh *fh, struct vfsmount *mnt,
 				  bool connected)
 {
 	struct dentry *real;
-	int bytes;
+	int bytes, type;
+	void *fid;
 
 	/*
 	 * Make sure that the stored uuid matches the uuid of the lower
-	 * layer where file handle will be decoded.
+	 * layer where file handle will be decoded. Pass ovl_fh struct to
+	 * nested overlayfs as is, lower overlayfs will match uuid to its
+	 * own layers.
 	 */
-	if (!uuid_equal(&fh->uuid, &mnt->mnt_sb->s_uuid))
+	if (ovl_is_overlay_fs(mnt->mnt_sb)) {
+		fid = fh;
+		type = OVL_FILEID;
+		bytes = fh->len;
+	} else if (uuid_equal(&fh->uuid, &mnt->mnt_sb->s_uuid)) {
+		fid = fh->fid;
+		type = fh->type;
+		bytes = (fh->len - offsetof(struct ovl_fh, fid));
+	} else {
 		return NULL;
+	}
 
-	bytes = (fh->len - offsetof(struct ovl_fh, fid));
-	real = exportfs_decode_fh(mnt, (struct fid *)fh->fid,
-				  bytes >> 2, (int)fh->type,
+	real = exportfs_decode_fh(mnt, fid, (bytes + 3) >> 2, type,
 				  connected ? ovl_acceptable : NULL, mnt);
 	if (IS_ERR(real)) {
 		/*

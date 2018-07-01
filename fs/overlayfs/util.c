@@ -63,13 +63,34 @@ struct super_block *ovl_same_sb(struct super_block *sb)
  * Return 1 (FILEID_INO32_GEN) if fs uses the default 32bit inode encoding.
  * Return -1 if fs uses a non default encoding with unknown inode size.
  */
-int ovl_can_decode_fh(struct super_block *sb)
+int ovl_can_decode_real_fh(struct super_block *sb)
 {
 	if (!sb->s_export_op || !sb->s_export_op->fh_to_dentry ||
 	    uuid_is_null(&sb->s_uuid))
 		return 0;
 
 	return sb->s_export_op->encode_fh ? -1 : FILEID_INO32_GEN;
+}
+
+static int ovl_can_decode_nested_fh(struct super_block *sb)
+{
+	struct super_block *real_sb;
+
+	if (!sb->s_export_op)
+		return 0;
+
+	/*
+	 * For lower overlay that is samefs we can determine 32bit inode size
+	 * and that can be used by nested overlayfs xino.
+	 */
+	real_sb = ovl_same_sb(sb);
+	return real_sb ? ovl_can_decode_real_fh(real_sb) : -1;
+}
+
+int ovl_can_decode_fh(struct super_block *sb)
+{
+	return ovl_is_overlay_fs(sb) ? ovl_can_decode_nested_fh(sb) :
+				       ovl_can_decode_real_fh(sb);
 }
 
 struct dentry *ovl_indexdir(struct super_block *sb)
