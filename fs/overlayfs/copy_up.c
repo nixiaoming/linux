@@ -254,6 +254,24 @@ struct ovl_fh *ovl_encode_real_fh(struct dentry *real, bool is_upper)
 	    WARN_ON(fh_type == FILEID_INVALID))
 		goto out;
 
+	/*
+	 * Prepending another ovl_fh header for nested overlay file handle adds
+	 * no new information for decoding. If we got a valid ovl_fh from lower
+	 * overlay, pass it up to nested overlay with the 'nested' flag.
+	 */
+	fh = ERR_PTR(-EINVAL);
+	if (ovl_is_overlay_fs(real->d_sb)) {
+		fh = buf;
+		if (WARN_ON(is_upper) ||
+		    WARN_ON(fh_type != OVL_FILEID) ||
+		    WARN_ON(fh->flags & OVL_FH_FLAG_PATH_NESTED) ||
+		    WARN_ON(ovl_check_fh_len(buf, buflen)))
+			goto out;
+
+		fh->flags |= OVL_FH_FLAG_PATH_NESTED;
+		return fh;
+	}
+
 	BUILD_BUG_ON(MAX_HANDLE_SZ + offsetof(struct ovl_fh, fid) > 255);
 	fh_len = offsetof(struct ovl_fh, fid) + buflen;
 	fh = kmalloc(fh_len, GFP_KERNEL);
@@ -294,7 +312,7 @@ int ovl_set_origin(struct dentry *dentry, struct dentry *lower,
 	 * so we can use the overlay.origin xattr to distignuish between a copy
 	 * up and a pure upper inode.
 	 */
-	if (ovl_can_decode_fh(lower->d_sb)) {
+	if (ovl_can_decode_real_fh(lower->d_sb)) {
 		fh = ovl_encode_real_fh(lower, false);
 		if (IS_ERR(fh))
 			return PTR_ERR(fh);

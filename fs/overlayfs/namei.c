@@ -151,21 +151,33 @@ invalid:
 }
 
 struct dentry *ovl_decode_real_fh(struct ovl_fh *fh, struct vfsmount *mnt,
-				  bool connected)
+				  bool connected, bool nested)
 {
 	struct dentry *real;
-	int bytes;
+	int bytes, type;
+	void *fid;
 
 	/*
 	 * Make sure that the stored uuid matches the uuid of the lower
-	 * layer where file handle will be decoded.
+	 * layer where file handle will be decoded. Pass nested ovl_fh to
+	 * lower overlay that will match uuid to its own layers.
 	 */
-	if (!uuid_equal(&fh->uuid, &mnt->mnt_sb->s_uuid))
+	if (ovl_is_overlay_fs(mnt->mnt_sb)) {
+		if (!nested)
+			return NULL;
+		fid = fh;
+		type = OVL_FILEID;
+		bytes = fh->len;
+		fh->flags &= ~OVL_FH_FLAG_PATH_NESTED;
+	} else if (uuid_equal(&fh->uuid, &mnt->mnt_sb->s_uuid)) {
+		fid = fh->fid;
+		type = fh->type;
+		bytes = (fh->len - offsetof(struct ovl_fh, fid));
+	} else {
 		return NULL;
+	}
 
-	bytes = (fh->len - offsetof(struct ovl_fh, fid));
-	real = exportfs_decode_fh(mnt, (struct fid *)fh->fid,
-				  bytes >> 2, (int)fh->type,
+	real = exportfs_decode_fh(mnt, fid, (bytes + 3) >> 2, type,
 				  connected ? ovl_acceptable : NULL, mnt);
 	if (IS_ERR(real)) {
 		/*
@@ -319,10 +331,11 @@ int ovl_check_origin_fh(struct ovl_fs *ofs, struct ovl_fh *fh, bool connected,
 {
 	struct dentry *origin = NULL;
 	int i;
+	u8 nested = fh->flags & OVL_FH_FLAG_PATH_NESTED;
 
 	for (i = 0; i < ofs->numlower; i++) {
 		origin = ovl_decode_real_fh(fh, ofs->lower_layers[i].mnt,
-					    connected);
+					    connected, nested);
 		if (origin)
 			break;
 	}
@@ -346,6 +359,9 @@ int ovl_check_origin_fh(struct ovl_fs *ofs, struct ovl_fh *fh, bool connected,
 		.dentry = origin,
 		.layer = &ofs->lower_layers[i]
 	};
+
+	/* Restore nested flag - ovl_lower_fh_to_d() is not done with fh */
+	fh->flags |= nested;
 
 	return 0;
 
@@ -456,7 +472,7 @@ struct dentry *ovl_index_upper(struct ovl_fs *ofs, struct dentry *index)
 	if (IS_ERR_OR_NULL(fh))
 		return ERR_CAST(fh);
 
-	upper = ovl_decode_real_fh(fh, ofs->upper_mnt, true);
+	upper = ovl_decode_real_fh(fh, ofs->upper_mnt, true, false);
 	kfree(fh);
 
 	if (IS_ERR_OR_NULL(upper))
