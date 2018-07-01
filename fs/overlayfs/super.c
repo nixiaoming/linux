@@ -778,11 +778,19 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	 */
 	real_sb = path->dentry->d_sb;
 	fh_type = ovl_can_decode_fh(real_sb);
-	if ((ofs->config.nfs_export ||
-	     (ofs->config.index && ofs->config.upperdir)) && !fh_type) {
+	if (ofs->config.index && ofs->config.upperdir && !fh_type) {
 		ofs->config.index = false;
+		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off.\n",
+			name);
+	}
+	/*
+	 * We do not support nested overlay NFS export even if lower overlay
+	 * does support NFS export.
+	 */
+	if (ofs->config.nfs_export &&
+	    (!fh_type || ovl_is_overlay_fs(real_sb))) {
 		ofs->config.nfs_export = false;
-		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to index=off,nfs_export=off.\n",
+		pr_warn("overlayfs: fs on '%s' does not support file handles, falling back to nfs_export=off.\n",
 			name);
 	}
 
@@ -790,7 +798,7 @@ static int ovl_lower_dir(const char *name, struct path *path,
 	if (ofs->config.xino != OVL_XINO_OFF && ovl_is_overlay_fs(real_sb)) {
 		real_sb = ovl_same_sb(real_sb);
 		if (real_sb) {
-			fh_type = ovl_can_decode_fh(real_sb);
+			fh_type = ovl_can_decode_real_fh(real_sb);
 		} else {
 			pr_warn("overlayfs: nested xino not supported, falling back to xino=off.\n");
 			ofs->config.xino = OVL_XINO_OFF;
@@ -1075,7 +1083,7 @@ static int ovl_make_workdir(struct ovl_fs *ofs, struct path *workpath)
 	}
 
 	/* Check if upper/work fs supports file handles */
-	fh_type = ovl_can_decode_fh(ofs->workdir->d_sb);
+	fh_type = ovl_can_decode_real_fh(ofs->workdir->d_sb);
 	if (ofs->config.index && !fh_type) {
 		ofs->config.index = false;
 		pr_warn("overlayfs: upper fs does not support file handles, falling back to index=off.\n");
