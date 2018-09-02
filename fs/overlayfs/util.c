@@ -104,6 +104,14 @@ bool ovl_verify_lower(struct super_block *sb)
 		(ofs->config.nfs_export && ofs->config.index);
 }
 
+/* Export only file handles of lower nested overlayfs */
+bool ovl_export_nested(struct super_block *sb)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	return ofs->config.nfs_export && ofs->config.nfs_export_nested;
+}
+
 struct ovl_entry *ovl_alloc_entry(unsigned int numlower)
 {
 	size_t size = offsetof(struct ovl_entry, lowerstack[numlower]);
@@ -695,7 +703,8 @@ static void ovl_cleanup_index(struct dentry *dentry)
 	struct qstr name;
 	int err;
 
-	err = ovl_get_index_name(lowerdentry, &name);
+	err = ovl_get_index_name(lowerdentry, &name,
+				 ovl_export_nested(dentry->d_sb));
 	if (err)
 		goto fail;
 
