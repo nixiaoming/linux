@@ -218,6 +218,7 @@ static int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 {
 	struct ovl_fh *fh = NULL;
 	int err, enc_lower;
+	bool nested = ovl_export_nested(dentry->d_sb);
 
 	/*
 	 * Check if we should encode a lower or upper file handle and maybe
@@ -227,9 +228,13 @@ static int ovl_d_to_fh(struct dentry *dentry, char *buf, int buflen)
 	if (enc_lower < 0)
 		goto fail;
 
+	/* nfs_export=nested supports encoding only lower file handles */
+	if (nested && !enc_lower)
+		goto fail;
+
 	/* Encode an upper or lower file handle */
 	fh = ovl_encode_real_fh(enc_lower ? ovl_dentry_lower(dentry) :
-				ovl_dentry_upper(dentry), !enc_lower);
+				ovl_dentry_upper(dentry), !enc_lower, nested);
 	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
 		goto fail;
@@ -772,7 +777,8 @@ static struct dentry *ovl_lower_fh_to_d(struct super_block *sb,
 			goto out_err;
 	}
 	if (index) {
-		err = ovl_verify_origin(index, origin.dentry, false);
+		err = ovl_verify_origin(index, origin.dentry, false,
+					ovl_export_nested(sb));
 		if (err)
 			goto out_err;
 	}
@@ -809,10 +815,11 @@ static struct dentry *ovl_fh_to_dentry(struct super_block *sb, struct fid *fid,
 
 	/*
 	 * Do not try to decode nested upper from upper_mnt. Decode nested file
-	 * handle only from lower overlayfs.
+	 * handle only from lower overlayfs. export_nfs=nested treats all file
+	 * handles as nested.
 	 */
 	flags = fh->flags;
-	nested = flags & OVL_FH_FLAG_PATH_NESTED;
+	nested = (flags & OVL_FH_FLAG_PATH_NESTED) || ovl_export_nested(sb);
 
 	err = -ESTALE;
 	if (nested && !ovl_is_overlay_fs(ovl_dentry_lower(sb->s_root)->d_sb))

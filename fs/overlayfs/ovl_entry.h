@@ -19,6 +19,7 @@ struct ovl_config {
 	const char *redirect_mode;
 	bool index;
 	bool nfs_export;
+	bool nfs_export_nested;
 	int xino;
 	bool metacopy;
 };

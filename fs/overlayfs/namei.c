@@ -335,7 +335,8 @@ int ovl_check_origin_fh(struct ovl_fs *ofs, struct ovl_fh *fh, bool connected,
 
 	for (i = 0; i < ofs->numlower; i++) {
 		origin = ovl_decode_real_fh(fh, ofs->lower_layers[i].mnt,
-					    connected, nested);
+					    connected, nested ||
+					    ofs->config.nfs_export_nested);
 		if (origin)
 			break;
 	}
@@ -485,13 +486,13 @@ static int ovl_verify_fh(struct dentry *dentry, const char *name,
  * Return 0 on match, -ESTALE on mismatch, -ENODATA on no xattr, < 0 on error.
  */
 int ovl_verify_set_fh(struct dentry *dentry, const char *name,
-		      struct dentry *real, bool is_upper, bool set)
+		      struct dentry *real, bool is_upper, bool set, bool nested)
 {
 	struct inode *inode;
 	struct ovl_fh *fh;
 	int err;
 
-	fh = ovl_encode_real_fh(real, is_upper);
+	fh = ovl_encode_real_fh(real, is_upper, nested);
 	err = PTR_ERR(fh);
 	if (IS_ERR(fh))
 		goto fail;
@@ -690,12 +691,12 @@ static int ovl_get_index_name_fh(struct ovl_fh *fh, struct qstr *name)
  * index dir was cleared. Either way, that index cannot be used to indentify
  * the overlay inode.
  */
-int ovl_get_index_name(struct dentry *origin, struct qstr *name)
+int ovl_get_index_name(struct dentry *origin, struct qstr *name, bool nested)
 {
 	struct ovl_fh *fh;
 	int err;
 
-	fh = ovl_encode_real_fh(origin, false);
+	fh = ovl_encode_real_fh(origin, false, nested);
 	if (IS_ERR(fh))
 		return PTR_ERR(fh);
 
@@ -746,7 +747,7 @@ struct dentry *ovl_lookup_index(struct ovl_fs *ofs, struct dentry *upper,
 	bool is_dir = d_is_dir(origin);
 	int err;
 
-	err = ovl_get_index_name(origin, &name);
+	err = ovl_get_index_name(origin, &name, ofs->config.nfs_export_nested);
 	if (err)
 		return ERR_PTR(err);
 
@@ -992,7 +993,8 @@ struct dentry *ovl_lookup(struct inode *dir, struct dentry *dentry,
 		if (upperdentry && !ctr &&
 		    ((d.is_dir && ovl_verify_lower(dentry->d_sb)) ||
 		     (!d.is_dir && ofs->config.index && origin_path))) {
-			err = ovl_verify_origin(upperdentry, this, false);
+			err = ovl_verify_origin(upperdentry, this, false,
+					ovl_export_nested(dentry->d_sb));
 			if (err) {
 				dput(this);
 				if (d.is_dir)
