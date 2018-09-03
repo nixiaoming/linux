@@ -85,6 +85,7 @@ static int ovl_real_fdget_meta(const struct file *file, struct fd *real,
 {
 	struct inode *inode = file_inode(file);
 	struct inode *realinode;
+	int err;
 
 	real->flags = 0;
 	real->file = file->private_data;
@@ -106,7 +107,13 @@ static int ovl_real_fdget_meta(const struct file *file, struct fd *real,
 	if (unlikely((file->f_flags ^ real->file->f_flags) & ~O_NOATIME))
 		return ovl_change_flags(real->file, file->f_flags);
 
-	return 0;
+	/* Maybe copy an open for write file to new snapshot */
+	if (ovl_is_snapshot_fs_type(inode->i_sb)) {
+		err = ovl_snapshot_maybe_copy_up(file_dentry(file),
+						 file->f_flags);
+	}
+
+	return err;
 }
 
 static int ovl_real_fdget(const struct file *file, struct fd *real)
