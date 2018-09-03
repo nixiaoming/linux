@@ -47,6 +47,8 @@ static int ovl_snapshot_show_options(struct seq_file *m, struct dentry *dentry)
 		seq_show_option(m, "snapshot", ofs->config.snapshot);
 	if (!ofs->config.redirect_dir)
 		seq_puts(m, ",redirect_dir=off");
+	if (ofs->config.metacopy)
+		seq_puts(m, ",metacopy=on");
 
 	return 0;
 }
@@ -146,6 +148,8 @@ enum {
 	OPT_SNAPSHOT,
 	OPT_REDIRECT_DIR_ON,
 	OPT_REDIRECT_DIR_OFF,
+	OPT_METACOPY_ON,
+	OPT_METACOPY_OFF,
 	OPT_ERR,
 };
 
@@ -154,6 +158,8 @@ static const match_table_t ovl_snapshot_tokens = {
 	{OPT_SNAPSHOT,			"snapshot=%s"},
 	{OPT_REDIRECT_DIR_ON,		"redirect_dir=on"},
 	{OPT_REDIRECT_DIR_OFF,		"redirect_dir=off"},
+	{OPT_METACOPY_ON,		"metacopy=on"},
+	{OPT_METACOPY_OFF,		"metacopy=off"},
 	{OPT_ERR,			NULL}
 };
 
@@ -192,6 +198,14 @@ static int ovl_snapshot_parse_opt(char *opt, struct ovl_config *config)
 		case OPT_REDIRECT_DIR_OFF:
 			config->redirect_dir = false;
 			config->redirect_follow = false;
+			break;
+
+		case OPT_METACOPY_ON:
+			config->metacopy = true;
+			break;
+
+		case OPT_METACOPY_OFF:
+			config->metacopy = false;
 			break;
 
 		default:
@@ -546,7 +560,7 @@ out:
 /*
  * Copy on write to snapshot if needed before file is modified.
  */
-int ovl_snapshot_copy_down(struct dentry *dentry)
+static int ovl_snapshot_maybe_copy_down(struct dentry *dentry)
 {
 	struct inode *inode = d_inode(dentry);
 	struct dentry *snap = ovl_snapshot_dentry(dentry);
@@ -589,6 +603,24 @@ bug:
 			    dentry, inode ? inode->i_ino : 0, err);
 	/* Allowing write would corrupt snapshot so deny */
 	return -EROFS;
+}
+
+int ovl_snapshot_copy_down(struct dentry *dentry)
+{
+	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
+	struct dentry *this = dget(dentry);
+	int err;
+
+	if (ofs->config.metacopy && !d_is_dir(dentry)) {
+		/* Only copy directory skeleton to snapshot */
+		this = dget_parent(dentry);
+		dput(dentry);
+	}
+
+	err = ovl_snapshot_maybe_copy_down(this);
+	dput(this);
+
+	return err;
 }
 
 /* Explicitly whiteout a negative snapshot mount dentry before create */
