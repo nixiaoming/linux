@@ -25,7 +25,12 @@ static const struct dentry_operations ovl_snapshot_dentry_operations = {
 
 static int ovl_snapshot_show_options(struct seq_file *m, struct dentry *dentry)
 {
-	seq_puts(m, ",nosnapshot");
+	struct ovl_fs *ofs = OVL_FS(dentry->d_sb);
+
+	if (ofs->config.snapshot)
+		seq_show_option(m, "snapshot", ofs->config.snapshot);
+	else
+		seq_puts(m, ",nosnapshot");
 
 	return 0;
 }
@@ -47,11 +52,13 @@ static const struct super_operations ovl_snapshot_super_operations = {
 };
 
 enum {
+	OPT_SNAPSHOT,
 	OPT_NOSNAPSHOT,
 	OPT_ERR,
 };
 
 static const match_table_t ovl_snapshot_tokens = {
+	{OPT_SNAPSHOT,		"snapshot=%s"},
 	{OPT_NOSNAPSHOT,	"nosnapshot"},
 	{OPT_ERR,		NULL}
 };
@@ -69,7 +76,16 @@ static int ovl_snapshot_parse_opt(char *opt, struct ovl_config *config)
 
 		token = match_token(p, ovl_snapshot_tokens, args);
 		switch (token) {
+		case OPT_SNAPSHOT:
+			kfree(config->snapshot);
+			config->snapshot = match_strdup(&args[0]);
+			if (!config->snapshot)
+				return -ENOMEM;
+			break;
+
 		case OPT_NOSNAPSHOT:
+			kfree(config->snapshot);
+			config->snapshot = NULL;
 			break;
 
 		default:
@@ -81,10 +97,72 @@ static int ovl_snapshot_parse_opt(char *opt, struct ovl_config *config)
 	return 0;
 }
 
+static int ovl_get_snapshot(struct ovl_fs *ofs, struct path *snappath)
+{
+	struct super_block *snapsb;
+	struct vfsmount *snapmnt;
+	char *tmp;
+	int err;
+
+	err = -ENOMEM;
+	tmp = kstrdup(ofs->config.snapshot, GFP_KERNEL);
+	if (!tmp)
+		goto out;
+
+	ovl_unescape(tmp);
+	err = ovl_mount_dir_noesc(ofs->config.snapshot, snappath);
+	if (err)
+		goto out;
+
+	/*
+	 * The path passed in snapshot=<snappath> needs to be the root of a
+	 * non-nested overlayfs with a single lower layer that matches the
+	 * snapshot mount upper path.
+	 */
+	snapsb = snappath->mnt->mnt_sb;
+	err = -EINVAL;
+	if (snappath->dentry != snapsb->s_root ||
+	    snapsb->s_magic != OVERLAYFS_SUPER_MAGIC) {
+		pr_err("overlayfs: snapshot='%s' is not an overlayfs root\n",
+		       tmp);
+		goto out_put;
+	}
+
+	if (snapsb->s_stack_depth > 1) {
+		pr_err("overlayfs: snapshot='%s' is a nested overlayfs\n", tmp);
+		goto out_put;
+	}
+
+	if (OVL_FS(snapsb)->numlower != 1 ||
+	    ofs->upper_mnt->mnt_root !=
+	    OVL_FS(snapsb)->lower_layers[0].mnt->mnt_root) {
+		pr_err("overlayfs: upperdir and snapshot's lowerdir mismatch\n");
+		goto out_put;
+	}
+
+	snapmnt = clone_private_mount(snappath);
+	err = PTR_ERR(snapmnt);
+	if (IS_ERR(snapmnt)) {
+		pr_err("overlayfs: failed to clone snapshot path\n");
+		goto out_put;
+	}
+
+	ofs->__snapmnt = snapmnt;
+	err = 0;
+out:
+	kfree(tmp);
+	return err;
+
+out_put:
+	path_put_init(snappath);
+	goto out;
+}
+
 static int ovl_snapshot_fill_super(struct super_block *sb, const char *dev_name,
 				   char *opt)
 {
 	struct path upperpath = { };
+	struct path snappath = { };
 	struct dentry *root_dentry;
 	struct ovl_entry *oe = NULL;
 	struct ovl_fs *ofs;
@@ -116,11 +194,25 @@ static int ovl_snapshot_fill_super(struct super_block *sb, const char *dev_name,
 	sb->s_maxbytes = ofs->upper_mnt->mnt_sb->s_maxbytes;
 	sb->s_time_gran = ofs->upper_mnt->mnt_sb->s_time_gran;
 
+	/*
+	 * Snapshot mount may be remounted later with underlying
+	 * snapshot overlay. We must leave room in stack below us
+	 * for that overlay, even if snapshot= mount option is not
+	 * provided on the initial mount.
+	 */
+	sb->s_stack_depth = max(1, ofs->upper_mnt->mnt_sb->s_stack_depth);
+
 	err = -EINVAL;
 	sb->s_stack_depth++;
 	if (sb->s_stack_depth > FILESYSTEM_MAX_STACK_DEPTH) {
 		pr_err("overlayfs: snapshot fs maximum stacking depth exceeded\n");
 		goto out_err;
+	}
+
+	if (ofs->config.snapshot) {
+		err = ovl_get_snapshot(ofs, &snappath);
+		if (err)
+			goto out_err;
 	}
 
 	err = -ENOMEM;
@@ -145,6 +237,7 @@ static int ovl_snapshot_fill_super(struct super_block *sb, const char *dev_name,
 		goto out_err;
 
 	mntput(upperpath.mnt);
+	path_put(&snappath);
 
 	root_dentry->d_fsdata = oe;
 	ovl_dentry_set_upper_alias(root_dentry);
@@ -158,6 +251,7 @@ static int ovl_snapshot_fill_super(struct super_block *sb, const char *dev_name,
 out_err:
 	kfree(oe);
 	path_put(&upperpath);
+	path_put(&snappath);
 	ovl_free_fs(ofs);
 out:
 	return err;
