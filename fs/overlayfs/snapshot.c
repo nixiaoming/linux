@@ -28,31 +28,58 @@ enum ovl_snapshot_flag {
 	OVL_SNAP_NOCOW,
 	/* No need to copy children to snapshot */
 	OVL_SNAP_CHILDREN_NOCOW,
+	/* Keep last */
+	OVL_SNAP_ID_SHIFT
 };
 
-static bool ovl_snapshot_test_flag(int nr, struct dentry *dentry)
+static unsigned long ovl_snapshot_get_id(struct dentry *dentry)
 {
-	return test_bit(nr, &OVL_E(dentry)->snapflags);
+	return &OVL_E(dentry)->snapflags >> OVL_SNAP_ID_SHIFT;
 }
 
-static void ovl_snapshot_set_flag(int nr, struct dentry *dentry)
+static void ovl_snapshot_set_id(struct dentry *dentry, unsigned long id)
 {
+	/* Set new snapshot id and reset flags */
+	&OVL_E(dentry)->snapflags = id << OVL_SNAP_ID_SHIFT;
+}
+
+static bool ovl_snapshot_test_flag(int nr, struct dentry *dentry,
+				   unsigned long id)
+{
+	unsigned long x = &OVL_E(dentry)->snapflags;
+
+	return (x >> OVL_SNAP_ID_SHIFT) == id ? test_bit(nr, x) : false;
+}
+
+static void ovl_snapshot_set_flag(int nr, struct dentry *dentry,
+				  unsigned long id)
+{
+	spin_lock(&dentry->d_lock);
+	/* Reset flags if cached snapshot id has been invalidated */
+	if (ovl_snapshot_get_id(dentry) != id)
+		ovl_snapshot_set_id(dentry, id);
+
 	set_bit(nr, &OVL_E(dentry)->snapflags);
+	spin_unlock(&dentry->d_lock);
 }
 
-static struct vfsmount *ovl_snapshot_mntget(struct dentry *dentry)
+static struct vfsmount *ovl_snapshot_mntget(struct dentry *dentry,
+					    unsigned long *snapid)
 {
+	*snapid = OVL_FS(dentry->d_sb)->snapid;
+
 	return mntget(OVL_FS(dentry->d_sb)->__snapmnt);
 }
 
-static bool ovl_snapshot_need_cow(struct dentry *dentry)
+static bool ovl_snapshot_need_cow(struct dentry *dentry, unsigned long id)
 {
-	return !ovl_snapshot_test_flag(OVL_SNAP_NOCOW, dentry);
+	return !ovl_snapshot_test_flag(OVL_SNAP_NOCOW, dentry, id);
 }
 
-static bool ovl_snapshot_children_need_cow(struct dentry *dentry)
+static bool ovl_snapshot_children_need_cow(struct dentry *dentry,
+					   unsigned long id)
 {
-	return !ovl_snapshot_test_flag(OVL_SNAP_CHILDREN_NOCOW, dentry);
+	return !ovl_snapshot_test_flag(OVL_SNAP_CHILDREN_NOCOW, dentry, id);
 }
 
 static void ovl_snapshot_set_nocow(struct dentry *dentry)
@@ -92,7 +119,8 @@ static struct dentry *ovl_snapshot_lookup_dir(struct super_block *snapsb,
 static struct dentry *ovl_snapshot_check_cow(struct dentry *parent,
 					     struct dentry *dentry)
 {
-	struct vfsmount *snapmnt = ovl_snapshot_mntget(dentry);
+	unsigned long snapid;
+	struct vfsmount *snapmnt = ovl_snapshot_mntget(dentry, &snapid);
 	bool is_dir = d_is_dir(dentry);
 	struct dentry *dir = is_dir ? dentry : parent;
 	const struct qstr *name = &dentry->d_name;
@@ -100,7 +128,7 @@ static struct dentry *ovl_snapshot_check_cow(struct dentry *parent,
 	struct dentry *snap = NULL;
 	int err;
 
-	if (!snapmnt || !ovl_snapshot_need_cow(dentry))
+	if (!snapmnt || !ovl_snapshot_need_cow(dentry, snapid))
 		goto out;
 
 	err = ovl_inode_lock(d_inode(dir));
@@ -109,10 +137,10 @@ static struct dentry *ovl_snapshot_check_cow(struct dentry *parent,
 		goto out;
 	}
 
-	if (!ovl_snapshot_need_cow(dentry))
+	if (!ovl_snapshot_need_cow(dentry, snapid))
 		goto out_unlock;
 
-	if (!is_dir && !ovl_snapshot_children_need_cow(parent)) {
+	if (!is_dir && !ovl_snapshot_children_need_cow(parent, snapid)) {
 		ovl_snapshot_set_nocow(dentry);
 		goto out_unlock;
 	}
@@ -530,9 +558,13 @@ static int ovl_snapshot_fill_super(struct super_block *sb, const char *dev_name,
 	mntput(upperpath.mnt);
 	path_put(&snappath);
 
+	/* Positive snapid for an active snapshot */
+	ofs->snapid = !!ofs->__snapmnt;
+
 	root_dentry->d_fsdata = oe;
 	ovl_dentry_set_upper_alias(root_dentry);
 	ovl_set_upperdata(d_inode(root_dentry));
+	ovl_snapshot_set_id(ofs->snapid);
 	ovl_snapshot_set_nocow(root_dentry);
 	ovl_inode_init(d_inode(root_dentry), upperpath.dentry, NULL, NULL);
 
@@ -602,6 +634,7 @@ void ovl_snapshot_fs_unregister(void)
  * Helpers for overlayfs snapshot that may be called from code that is
  * shared between snapshot fs mount and overlay fs mount.
  */
+
 static struct dentry *ovl_snapshot_dentry(struct dentry *dentry)
 {
 	struct dentry *parent = dget_parent(dentry);
@@ -769,12 +802,13 @@ static int ovl_snapshot_copy_up_meta(struct dentry *dentry)
 
 int ovl_snapshot_maybe_copy_up(struct dentry *dentry, unsigned int flags)
 {
-	struct vfsmount *snapmnt = ovl_snapshot_mntget(dentry);
+	unsigned long snapid;
+	struct vfsmount *snapmnt = ovl_snapshot_mntget(dentry, &snapid);
 	int err = 0;
 
 	if (snapmnt && ovl_open_flags_need_copy_up(flags) &&
 	    !special_file(d_inode(dentry)->i_mode) &&
-	    ovl_snapshot_need_cow(dentry))
+	    ovl_snapshot_need_cow(dentry, snapid))
 		err = ovl_snapshot_copy_up_meta(dentry);
 
 	mntput(snapmnt);
@@ -783,10 +817,11 @@ int ovl_snapshot_maybe_copy_up(struct dentry *dentry, unsigned int flags)
 
 int ovl_snapshot_want_write(struct dentry *dentry)
 {
-	struct vfsmount *snapmnt = ovl_snapshot_mntget(dentry);
+	unsigned long snapid;
+	struct vfsmount *snapmnt = ovl_snapshot_mntget(dentry, &snapid);
 	int err = 0;
 
-	if (snapmnt && ovl_snapshot_need_cow(dentry)) {
+	if (snapmnt && ovl_snapshot_need_cow(dentry, snapid)) {
 		/* Negative dentry may need to be explicitly whited out */
 		if (d_is_negative(dentry))
 			err = ovl_snapshot_whiteout(dentry);

@@ -48,6 +48,8 @@ struct ovl_path {
 struct ovl_fs {
 	struct vfsmount *upper_mnt;
 	struct vfsmount *__snapmnt;
+	/* snapid is incremented when changing __snapmnt */
+	unsigned long snapid;
 	unsigned int numlower;
 	/* Number of unique lower sb that differ from upper sb */
 	unsigned int numlowerfs;
@@ -84,7 +86,8 @@ struct ovl_entry {
 		struct {
 			unsigned long flags;
 			/*
-			 * For snapshot fs dentries. We could squash this field
+			 * For snapshot fs dentries. Stored along side snapshot
+			 * id to validate the flags. We could squash this field
 			 * with flags above, but so far it fits inside union,
 			 * so easier to keep them apart.
 			 */
