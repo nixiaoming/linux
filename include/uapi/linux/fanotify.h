@@ -37,10 +37,19 @@
 #define FAN_UNLIMITED_QUEUE	0x00000010
 #define FAN_UNLIMITED_MARKS	0x00000020
 #define FAN_ENABLE_AUDIT	0x00000040
+#define FAN_UNPRIVILEGED	0x00000080
 
 #define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
-				 FAN_ALL_CLASS_BITS | FAN_UNLIMITED_QUEUE |\
-				 FAN_UNLIMITED_MARKS)
+				 FAN_ALL_CLASS_BITS | FAN_UNPRIVILEGED | \
+				 FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS)
+
+/*
+ * fanotify_init() flags allowed for unprivileged users.
+ * It's only ok to add FAN_CLASS_NOTIF to this mask because it is zero and
+ * because it is the only class we allow for unprivileged users.
+ */
+#define FAN_UNPRIV_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
+				 FAN_CLASS_NOTIF | FAN_UNPRIVILEGED)
 
 /* flags used for fanotify_modify_mark() */
 #define FAN_MARK_ADD		0x00000001

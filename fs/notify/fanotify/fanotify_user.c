@@ -132,10 +132,19 @@ static int fill_event_metadata(struct fsnotify_group *group,
 	metadata->vers = FANOTIFY_METADATA_VERSION;
 	metadata->reserved = 0;
 	metadata->mask = fsn_event->mask & FAN_ALL_OUTGOING_EVENTS;
-	metadata->pid = pid_vnr(event->tgid);
-	if (unlikely(fsn_event->mask & FAN_Q_OVERFLOW))
+	/*
+	 * An unprivileged event listener does not get an open file descriptor
+	 * in the event nor the generating process pid.
+	 */
+	if (FAN_GROUP_FLAG(group, FAN_UNPRIVILEGED))
+		metadata->pid = 0;
+	else
+		metadata->pid = pid_vnr(event->tgid);
+
+	if (FAN_GROUP_FLAG(group, FAN_UNPRIVILEGED) ||
+	    unlikely(fsn_event->mask & FAN_Q_OVERFLOW)) {
 		metadata->fd = FAN_NOFD;
-	else {
+	} else {
 		metadata->fd = create_fd(group, event, file);
 		if (metadata->fd < 0)
 			ret = metadata->fd;
@@ -700,12 +709,25 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	int f_flags, fd;
 	struct user_struct *user;
 	struct fanotify_event_info *oevent;
+	unsigned int class = flags & FAN_ALL_CLASS_BITS;
 
 	pr_debug("%s: flags=%x event_f_flags=%x\n",
 		 __func__, flags, event_f_flags);
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (flags & FAN_UNPRIVILEGED) {
+		/*
+		 * User can request an unprivileged event listener even if
+		 * user itself is priviledged. An unprivileged event listener
+		 * does not get an open file descriptor in the event nor the
+		 * generating process pid and cannot request permission events,
+		 * cannot set mount/filesystem marks and unlimited queue/marks.
+		 */
+		if ((flags & ~FAN_UNPRIV_INIT_FLAGS) ||
+		    class != FAN_CLASS_NOTIF)
+			return -EINVAL;
+	} else if (!capable(CAP_SYS_ADMIN)) {
 		return -EPERM;
+	}
 
 #ifdef CONFIG_AUDITSYSCALL
 	if (flags & ~(FAN_ALL_INIT_FLAGS | FAN_ENABLE_AUDIT))
@@ -762,7 +784,7 @@ SYSCALL_DEFINE2(fanotify_init, unsigned int, flags, unsigned int, event_f_flags)
 	group->fanotify_data.f_flags = event_f_flags;
 	init_waitqueue_head(&group->fanotify_data.access_waitq);
 	INIT_LIST_HEAD(&group->fanotify_data.access_list);
-	switch (flags & FAN_ALL_CLASS_BITS) {
+	switch (class) {
 	case FAN_CLASS_NOTIF:
 		group->priority = FS_PRIO_0;
 		break;
@@ -885,6 +907,14 @@ static int do_fanotify_mark(int fanotify_fd, unsigned int flags, __u64 mask,
 	ret = -EINVAL;
 	if (mask & FAN_ALL_PERM_EVENTS &&
 	    group->priority == FS_PRIO_0)
+		goto fput_and_out;
+
+	/*
+	 * An unprivileged event listener is not allowed to watch a mount
+	 * point nor a filesystem.
+	 */
+	if (FAN_GROUP_FLAG(group, FAN_UNPRIVILEGED) &&
+	    mark_type != FAN_MARK_INODE)
 		goto fput_and_out;
 
 	if (flags & FAN_MARK_FLUSH) {
