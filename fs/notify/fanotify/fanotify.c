@@ -171,7 +171,10 @@ struct fanotify_event_info *fanotify_alloc_event(struct fsnotify_group *group,
 		goto out;
 init: __maybe_unused
 	fsnotify_init_event(&event->fse, inode, mask);
-	event->tgid = get_pid(task_tgid(current));
+	if (FAN_GROUP_FLAG(group, FAN_EVENT_INFO_TID))
+		event->tgid = get_pid(task_pid(current));
+	else
+		event->tgid = get_pid(task_tgid(current));
 	if (path) {
 		event->path = *path;
 		path_get(&event->path);

@@ -38,10 +38,12 @@
 #define FAN_UNLIMITED_MARKS	0x00000020
 #define FAN_ENABLE_AUDIT	0x00000040
 #define FAN_UNPRIVILEGED	0x00000080
+#define FAN_EVENT_INFO_TID	0x00000100	/* reports the thread id of the event trigger */
 
 #define FAN_ALL_INIT_FLAGS	(FAN_CLOEXEC | FAN_NONBLOCK | \
 				 FAN_ALL_CLASS_BITS | FAN_UNPRIVILEGED | \
-				 FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS)
+				 FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS | \
+				 FAN_EVENT_INFO_TID)
 
 /*
  * fanotify_init() flags allowed for unprivileged users.
